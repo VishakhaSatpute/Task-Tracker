@@ -1,0 +1,8 @@
+[10:02] Maya: ok let's go. Three things today, I think. The billing export thing, the mobile login crash, and Dan wanted to float the partner portal.
+[10:03] Dan: yeah so partner portal -- basically a login area where reseller partners can see their leads and commissions. Nothing built yet, just want to scope it for Q1.
+[10:05] Maya: billing export. Finance keeps asking for CSV of invoices by customer. Raj, where are we?
+[10:05] Raj: half done, the query works but it times out over 10k rows. need to paginate. Finance wants it before month end.
+[10:08] Priya: mobile login crash -- iOS 17 only, happens when biometric prompt is cancelled. 4 tickets this week. I'd call that urgent.
+[10:09] Maya: agreed, urgent. Priya owns it.
+[10:11] Dan: back to partner portal, I'd say nice to have but let's not lose it. Could reuse the SSO work.
+[10:13] Maya: ok. Anyone want coffee?

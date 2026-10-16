@@ -1,0 +1,1 @@
+We keep missing the weekly standup. Build a reminder bot that pings the team 10 minutes before and lets people swap slots. Needed before the end of the month.

@@ -1,0 +1,1703 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createStore } from "./store.js";
+import { draftProjectsFromIdea, copyForClaudeError } from "./claude.js";
+import {
+  folderApiSupported, pickFolder, getSavedFolder, folderPermission,
+  syncNotes, lastScheduledTime, nextScheduledTime,
+} from "./notesSync.js";
+import { SettingsModal } from "./SettingsModal.jsx";
+import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings.js";
+
+const STATUSES = ["ideation", "inprogress", "completed", "dead"];
+const STATUS_LABELS = { ideation: "Ideation", inprogress: "In Progress", completed: "Completed", dead: "Dead" };
+const PRIORITIES = ["high", "medium", "low"];
+const SEED_TYPES = [
+  { id: "task", label: "Task", isBuiltIn: true },
+  { id: "issue", label: "Issue", isBuiltIn: true },
+];
+
+// Identifies this tab to the server's sync lease.
+const TAB_ID = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+
+function genId() {
+  return (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(36).slice(2, 10));
+}
+
+function statusVar(status) { return "var(--s-" + status + ")"; }
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ""; }
+function initials(name) {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// ---------- store-backed hooks ----------
+
+function useDb() {
+  const [db, setDb] = useState(undefined); // undefined = loading, null = unavailable
+  useEffect(() => {
+    let cancelled = false;
+    createStore().then(
+      (d) => { if (!cancelled) setDb(d); },
+      (e) => { console.error("store open failed", e); if (!cancelled) setDb(null); }
+    );
+    return () => { cancelled = true; };
+  }, []);
+  return db;
+}
+
+function useCollection(db, path) {
+  const [docs, setDocs] = useState(null); // null = loading
+  useEffect(() => {
+    if (!db || !path) { setDocs(null); return; }
+    setDocs(null);
+    const unsub = db.collection(path).onSnapshot(
+      (snap) => { setDocs(snap.docs.map((d) => ({ id: d.id, ...d.data() }))); },
+      (err) => { console.error("store subscribe error", path, err); setDocs([]); }
+    );
+    return unsub;
+  }, [db, path]);
+  return docs;
+}
+
+async function ensureSeedTypes(db, existingTypes) {
+  if (!db || existingTypes === null) return;
+  if (existingTypes.length > 0) return;
+  for (const t of SEED_TYPES) {
+    try {
+      await db.doc("types/" + t.id).set({ label: t.label, isBuiltIn: true });
+    } catch (e) {
+      console.error("seed type failed", e);
+    }
+  }
+}
+
+// ---------- small marks ----------
+
+function PriorityMark({ level }) {
+  const n = { high: 3, medium: 2, low: 1 }[level] || 1;
+  return (
+    <span className="prio" data-level={level} role="img" aria-label={cap(level) + " priority"}>
+      {[1, 2, 3].map((i) => (
+        <i key={i} className={i <= n ? "on" : ""} style={{ height: 5 + i * 3 }} />
+      ))}
+    </span>
+  );
+}
+
+function Assignee({ name }) {
+  if (!name) {
+    return (
+      <span className="who">
+        <span className="avatar none" aria-hidden="true" />
+        <span className="nm none">Unassigned</span>
+      </span>
+    );
+  }
+  return (
+    <span className="who" title={name}>
+      <span className="avatar" aria-hidden="true">{initials(name)}</span>
+      <span className="nm">{name}</span>
+    </span>
+  );
+}
+
+function StatusMark({ status }) {
+  return (
+    <span className="m-status" style={{ "--status": statusVar(status) }}>
+      <span className="dot" aria-hidden="true" />
+      {STATUS_LABELS[status] || status}
+    </span>
+  );
+}
+
+function Meta({ project, typeLabel, showStatus }) {
+  return (
+    <div className="meta">
+      {showStatus && <StatusMark status={project.status} />}
+      <span className="m-type">{typeLabel}</span>
+      <span className="m-prio">
+        <PriorityMark level={project.priority} />
+        {cap(project.priority)}
+      </span>
+      <Assignee name={project.assignedTo} />
+    </div>
+  );
+}
+
+// ---------- Pipeline: status bar that doubles as the filter ----------
+
+function PipelineStrip({ projects, value, onChange, interactive }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setReady(true), 60);
+    return () => clearTimeout(id);
+  }, []);
+
+  const counts = useMemo(() => {
+    const c = { ideation: 0, inprogress: 0, completed: 0, dead: 0 };
+    for (const p of projects) if (c[p.status] !== undefined) c[p.status] += 1;
+    return c;
+  }, [projects]);
+
+  const items = [
+    ...(interactive ? [{ value: "all", label: "All", count: projects.length }] : []),
+    ...STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s], count: counts[s] })),
+  ];
+
+  return (
+    <div className="pipeline">
+      <div className="bar" aria-hidden="true">
+        {STATUSES.map((s) => {
+          const dim = interactive && value !== "all" && value !== s;
+          return (
+            <div
+              key={s}
+              className="bar-seg"
+              data-dim={dim ? "true" : "false"}
+              style={{ "--status": statusVar(s), flexGrow: ready ? counts[s] : 0, borderRightWidth: counts[s] > 0 ? 3 : 0 }}
+            />
+          );
+        })}
+      </div>
+      <div className="legend" role={interactive ? "group" : undefined} aria-label={interactive ? "Filter by status" : undefined}>
+        {items.map((it) => {
+          const inner = (
+            <React.Fragment>
+              {it.value === "all" ? <span className="dot hollow" aria-hidden="true" /> : <span className="dot" aria-hidden="true" />}
+              <span className="lg-label">{it.label}</span>
+              <span className="lg-count">{it.count}</span>
+            </React.Fragment>
+          );
+          const style = it.value === "all" ? undefined : { "--status": statusVar(it.value) };
+          return interactive ? (
+            <button key={it.value} type="button" className="lg" aria-pressed={value === it.value} onClick={() => onChange(it.value)} style={style}>
+              {inner}
+            </button>
+          ) : (
+            <div key={it.value} className="lg" style={style}>{inner}</div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- ViewSwitcher ----------
+
+const VIEW_ICONS = {
+  list: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+      <path d="M3 4h10M3 8h10M3 12h10" />
+    </svg>
+  ),
+  tiles: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+      <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+    </svg>
+  ),
+  phases: (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="3" height="11" rx="1" /><rect x="6.5" y="2.5" width="3" height="7" rx="1" /><rect x="10.5" y="2.5" width="3" height="9" rx="1" />
+    </svg>
+  ),
+};
+
+function ViewSwitcher({ value, onChange }) {
+  const options = [
+    { value: "list", label: "List" },
+    { value: "tiles", label: "Tiles" },
+    { value: "phases", label: "Phases" },
+  ];
+  return (
+    <div className="switcher" role="group" aria-label="View">
+      {options.map((opt) => (
+        <button key={opt.value} type="button" aria-pressed={value === opt.value} onClick={() => onChange(opt.value)}>
+          {VIEW_ICONS[opt.value]}
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Header ----------
+
+function Header({ onAddProject, onManageMembers, onManageTypes, onDescribeIdea, showIdeaButton, ideaButtonDisabled, view, onViewChange, connectionState, onSyncNow, syncing, syncStatus, onOpenSettings }) {
+  return (
+    <div className="top">
+      <div>
+        <h1 className="title">Task Tracker</h1>
+        {connectionState === "unavailable" && (
+          <p className="warn">Can’t reach the Task Tracker server &mdash; data cannot be saved.</p>
+        )}
+        {syncStatus && <p className="sync-status">{syncStatus}</p>}
+      </div>
+      <div className="controls">
+        <ViewSwitcher value={view} onChange={onViewChange} />
+        <button type="button" onClick={onSyncNow} className="btn-outline" disabled={connectionState !== "ready" || syncing}>
+          {syncing ? "Syncing…" : "Sync notes now"}
+        </button>
+        <button type="button" onClick={onOpenSettings} className="btn-outline">Settings</button>
+        <button type="button" onClick={onManageMembers} className="btn-outline" disabled={connectionState !== "ready"}>Manage members</button>
+        <button type="button" onClick={onManageTypes} className="btn-outline" disabled={connectionState !== "ready"}>Manage project types</button>
+        {showIdeaButton && (
+          <button type="button" onClick={onDescribeIdea} className="btn-outline" disabled={ideaButtonDisabled}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M7 1.2c0 2.65 2.15 4.8 4.8 4.8-2.65 0-4.8 2.15-4.8 4.8 0-2.65-2.15-4.8-4.8-4.8C4.85 6 7 3.85 7 1.2z" />
+            </svg>
+            Describe an idea
+          </button>
+        )}
+        <button type="button" onClick={onAddProject} className="btn-primary">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <path d="M7 2v10M2 7h10" />
+          </svg>
+          Add project
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- MembersModal ----------
+
+function MembersModal({ members, isMemberInUse, onAddMember, onDeleteMember, onClose }) {
+  const [newName, setNewName] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    if (members.some((m) => (m.name || "").toLowerCase() === trimmed.toLowerCase())) {
+      setMessage(trimmed + " is already a member.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onAddMember(trimmed);
+      setNewName("");
+      setMessage("");
+    } catch (err) {
+      setMessage("Could not add member. Please try again.");
+    }
+    setSaving(false);
+  }
+
+  async function handleDelete(member) {
+    try {
+      const result = await onDeleteMember(member);
+      setMessage(result.ok ? "" : result.reason || "Unable to delete this member.");
+    } catch (err) {
+      setMessage("Could not delete member. Please try again.");
+    }
+  }
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Manage members" onClick={(e) => e.stopPropagation()}>
+        <h2>Manage members</h2>
+
+        {members.length === 0 ? (
+          <p className="tm-empty">No members yet. Add someone below to assign projects to them.</p>
+        ) : (
+          <div className="manage-list-scroll">
+            <ul className="tm-list">
+              {members.map((m) => {
+                const inUse = isMemberInUse(m.name);
+                return (
+                  <li key={m.id}>
+                    <span className="who">
+                      <span className="avatar" aria-hidden="true">{initials(m.name)}</span>
+                      <span>{m.name}</span>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={inUse}
+                      onClick={() => handleDelete(m)}
+                      className="link danger"
+                      title={inUse ? "Cannot delete: assigned to a project" : "Delete member"}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {message && <p className="err" style={{ marginTop: 10 }}>{message}</p>}
+
+        <form onSubmit={handleAdd} className="tm-add" style={{ marginTop: 14 }}>
+          <input
+            type="text"
+            id="manage-member-input"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="New member name"
+            className="field"
+            autoFocus
+          />
+          <button type="submit" disabled={saving} className="btn-primary">{saving ? "Adding…" : "Add member"}</button>
+        </form>
+
+        <div className="actions" style={{ marginTop: 18 }}>
+          <span />
+          <div className="right">
+            <button type="button" onClick={onClose} className="btn-quiet">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- TypesModal ----------
+
+function TypesModal({ types, isTypeInUse, onAddType, onDeleteType, onClose }) {
+  const [newLabel, setNewLabel] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    const trimmed = newLabel.trim();
+    if (!trimmed) return;
+    if (types.some((t) => (t.label || "").toLowerCase() === trimmed.toLowerCase())) {
+      setMessage(trimmed + " already exists.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onAddType(trimmed);
+      setNewLabel("");
+      setMessage("");
+    } catch (err) {
+      setMessage("Could not add type. Please try again.");
+    }
+    setSaving(false);
+  }
+
+  async function handleDelete(id) {
+    const result = await onDeleteType(id);
+    setMessage(result.ok ? "" : result.reason || "Unable to delete this type.");
+  }
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Manage project types" onClick={(e) => e.stopPropagation()}>
+        <h2>Manage project types</h2>
+
+        {types.length === 0 ? (
+          <p className="tm-empty">No types yet. Add one below.</p>
+        ) : (
+          <div className="manage-list-scroll">
+            <ul className="tm-list">
+              {types.map((t) => {
+                const inUse = isTypeInUse(t.id);
+                return (
+                  <li key={t.id}>
+                    <span>{t.label}</span>
+                    <button
+                      type="button"
+                      disabled={inUse}
+                      onClick={() => handleDelete(t.id)}
+                      className="link danger"
+                      title={inUse ? "Cannot delete: assigned to a project" : "Delete type"}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {message && <p className="err" style={{ marginTop: 10 }}>{message}</p>}
+
+        <form onSubmit={handleAdd} className="tm-add" style={{ marginTop: 14 }}>
+          <input
+            type="text"
+            id="manage-type-input"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            placeholder="New type name"
+            className="field"
+            autoFocus
+          />
+          <button type="submit" disabled={saving} className="btn-primary">{saving ? "Adding…" : "Add type"}</button>
+        </form>
+
+        <div className="actions" style={{ marginTop: 18 }}>
+          <span />
+          <div className="right">
+            <button type="button" onClick={onClose} className="btn-quiet">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- IdeaCapture (talk out an idea, let Claude draft it) ----------
+
+function MicIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5.25" y="1.5" width="4.5" height="7.5" rx="2.25" />
+      <path d="M2.75 7.25a4.75 4.75 0 0 0 9.5 0" />
+      <path d="M7.5 12v1.5" />
+    </svg>
+  );
+}
+
+function IdeaCapture({ onGenerate, onClose }) {
+  const [idea, setIdea] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const [error, setError] = useState("");
+  const [listening, setListening] = useState(false);
+  const [interim, setInterim] = useState("");
+  const [micNote, setMicNote] = useState("");
+  const ctlRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  const SpeechRecognitionCtor = typeof window !== "undefined"
+    ? (window.SpeechRecognition || window.webkitSpeechRecognition)
+    : null;
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  useEffect(() => () => {
+    ctlRef.current?.abort();
+    try { recognitionRef.current?.stop(); } catch (e) {}
+  }, []);
+
+  const dictationFallbackNote = "Voice input isn't available in this view.";
+
+  function stopListening() {
+    try { recognitionRef.current?.stop(); } catch (e) {}
+  }
+
+  function toggleMic() {
+    if (!SpeechRecognitionCtor) return;
+    if (listening) { stopListening(); return; }
+
+    setMicNote("");
+    setInterim("");
+    let recognition;
+    try {
+      recognition = new SpeechRecognitionCtor();
+    } catch (e) {
+      setMicNote(dictationFallbackNote);
+      return;
+    }
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = navigator.language || "en-US";
+
+    recognition.onresult = (e) => {
+      let finalChunk = "";
+      let interimChunk = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) finalChunk += res[0].transcript;
+        else interimChunk += res[0].transcript;
+      }
+      if (finalChunk.trim()) {
+        setIdea((prev) => {
+          const sep = prev && !/\s$/.test(prev) ? " " : "";
+          return prev + sep + finalChunk.trim() + " ";
+        });
+      }
+      setInterim(interimChunk);
+    };
+    recognition.onerror = (e) => {
+      setListening(false);
+      setInterim("");
+      setMicNote(
+        e.error === "not-allowed" || e.error === "service-not-allowed"
+          ? dictationFallbackNote
+          : "Voice input stopped unexpectedly. " + dictationFallbackNote
+      );
+    };
+    recognition.onend = () => {
+      setListening(false);
+      setInterim("");
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+      setListening(true);
+    } catch (e) {
+      setMicNote(dictationFallbackNote);
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const trimmed = idea.trim();
+    if (!trimmed) { setError("Describe the idea first."); return; }
+    stopListening();
+    setThinking(true);
+    setError("");
+    const ctl = new AbortController();
+    ctlRef.current = ctl;
+    try {
+      await onGenerate(trimmed, ctl.signal);
+      // success: the caller swaps this modal for the pre-filled project form
+    } catch (err) {
+      setThinking(false);
+      console.error("[Task Tracker] idea generation failed:", err);
+      setError(copyForClaudeError(err));
+    }
+  }
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Describe an idea" onClick={(e) => e.stopPropagation()}>
+        <h2>Describe an idea</h2>
+
+        <div className="dictation-callout">
+          <span className="dictation-callout-icon" aria-hidden="true"><MicIcon /></span>
+          <p>
+            <strong>Want to speak it instead of typing?</strong> Use your device's own dictation &mdash; press <kbd>Fn</kbd> <kbd>Fn</kbd> on Mac or <kbd>Win</kbd> <kbd>H</kbd> on Windows &mdash; then just talk into the box below.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="form">
+          <div>
+            <label className="lbl" htmlFor="idea-text">Talk about your idea</label>
+            <div className="idea-field-wrap">
+              <textarea
+                id="idea-text"
+                value={idea}
+                onChange={(e) => setIdea(e.target.value)}
+                placeholder="e.g. I want something that reminds the team about weekly standups and lets people swap their slot with someone else..."
+                rows={6}
+                className={"field" + (SpeechRecognitionCtor ? " has-mic" : "")}
+                autoFocus
+                disabled={thinking}
+              />
+              {SpeechRecognitionCtor && (
+                <button
+                  type="button"
+                  onClick={toggleMic}
+                  className="mic-btn"
+                  aria-pressed={listening}
+                  aria-label={listening ? "Stop voice input" : "Start voice input"}
+                  title={listening ? "Stop voice input" : "Start voice input"}
+                  disabled={thinking}
+                >
+                  <MicIcon />
+                </button>
+              )}
+            </div>
+            {listening && (
+              <p className="mic-status">
+                Listening&hellip; {interim && <span className="mic-interim">{interim}</span>}
+              </p>
+            )}
+            {micNote && <p className="mic-status mic-status-note">{micNote}</p>}
+          </div>
+          <p style={{ fontSize: 13, color: "var(--ink-2)", marginTop: -8 }}>
+            Claude will write this up as a project name and description. Pasting notes or a transcript that covers several projects adds one card for each. They start in Ideation, unassigned.
+          </p>
+          {error && <p className="err">{error}</p>}
+          <div className="actions">
+            <span />
+            <div className="right">
+              <button type="button" onClick={onClose} className="btn-quiet" disabled={thinking}>Cancel</button>
+              <button type="submit" disabled={thinking || !idea.trim()} className="btn-primary">
+                {thinking ? "Thinking…" : "Generate project"}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------- ProjectForm (modal) ----------
+
+function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete, onManageMembers, onManageTypes, notes, notesLoading, onAddNote }) {
+  const isEditing = Boolean(project);
+  const [name, setName] = useState(project?.name ?? draft?.name ?? "");
+  const [description, setDescription] = useState(project?.description ?? draft?.description ?? "");
+  const [typeId, setTypeId] = useState(project?.typeId ?? draft?.typeId ?? types[0]?.id ?? "");
+  const [priority, setPriority] = useState(project?.priority ?? draft?.priority ?? "medium");
+  const [assignedTo, setAssignedTo] = useState(project?.assignedTo ?? "");
+  const [status, setStatus] = useState(project?.status ?? "ideation");
+  const [error, setError] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const selectedTypeExists = types.some((t) => t.id === typeId);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) { setError("Project name is required."); return; }
+    if (!typeId || !selectedTypeExists) { setError("Select a project type."); return; }
+    setSaving(true);
+    try {
+      await onSave({
+        id: project?.id,
+        name: name.trim(),
+        description: description.trim(),
+        typeId,
+        priority,
+        assignedTo: assignedTo.trim(),
+        status,
+      });
+      onClose();
+    } catch (err) {
+      setError("Could not save. Please try again.");
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!project) return;
+    setSaving(true);
+    try {
+      await onDelete(project.id);
+      onClose();
+    } catch (err) {
+      setError("Could not delete. Please try again.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className={"modal" + (isEditing ? " with-notes" : "")} role="dialog" aria-modal="true" aria-label={isEditing ? "Edit project" : "Add project"} onClick={(e) => e.stopPropagation()}>
+        <h2>{isEditing ? "Edit project" : "Add project"}</h2>
+
+        <div className="modal-split">
+          <div className="modal-main">
+            <form onSubmit={handleSubmit} className="form">
+          <div>
+            <label className="lbl" htmlFor="pf-name">
+              Name <span className="req">*</span>
+            </label>
+            <input id="pf-name" type="text" value={name} onChange={(e) => setName(e.target.value)} className="field" autoFocus />
+          </div>
+
+          <div>
+            <label className="lbl" htmlFor="pf-description">Description</label>
+            <textarea id="pf-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="field" />
+          </div>
+
+          <div className="grid2">
+            <div>
+              <div className="lbl-row">
+                <label className="lbl" htmlFor="pf-type">Type</label>
+                <button type="button" className="link small" onClick={onManageTypes}>Manage types</button>
+              </div>
+              <select id="pf-type" value={typeId} onChange={(e) => setTypeId(e.target.value)} className="field">
+                {!selectedTypeExists && <option value={typeId} disabled>Select a type&hellip;</option>}
+                {types.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="lbl" htmlFor="pf-priority">Priority</label>
+              <select id="pf-priority" value={priority} onChange={(e) => setPriority(e.target.value)} className="field">
+                {PRIORITIES.map((p) => <option key={p} value={p}>{cap(p)}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid2">
+            <div>
+              <div className="lbl-row">
+                <label className="lbl" htmlFor="pf-assignee">Assigned to</label>
+                <button type="button" className="link small" onClick={onManageMembers}>Manage members</button>
+              </div>
+              <select id="pf-assignee" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="field">
+                <option value="">Unassigned</option>
+                {members.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+                {assignedTo && !members.some((m) => m.name === assignedTo) && (
+                  <option value={assignedTo}>{assignedTo}</option>
+                )}
+              </select>
+            </div>
+
+            <div>
+              <label className="lbl" htmlFor="pf-status">Status</label>
+              <select id="pf-status" value={status} onChange={(e) => setStatus(e.target.value)} className="field">
+                {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {error && <p className="err">{error}</p>}
+
+          <div className="actions">
+            <div>
+              {isEditing && !confirmingDelete && (
+                <button type="button" onClick={() => setConfirmingDelete(true)} className="link danger">
+                  Delete project
+                </button>
+              )}
+              {isEditing && confirmingDelete && (
+                <div className="confirm">
+                  <span>Delete this project?</span>
+                  <button type="button" onClick={handleDelete} className="link danger" disabled={saving}>
+                    Yes, delete
+                  </button>
+                  <button type="button" onClick={() => setConfirmingDelete(false)} className="link" style={{ fontWeight: 500, color: "var(--ink-2)" }}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+            {!confirmingDelete && (
+              <div className="right">
+                <button type="button" onClick={onClose} className="btn-quiet">Cancel</button>
+                <button type="submit" disabled={saving} className="btn-primary">
+                  {saving ? "Saving…" : isEditing ? "Save changes" : "Add project"}
+                </button>
+              </div>
+            )}
+          </div>
+        </form>
+          </div>
+
+          {isEditing && (
+            <NotesPanel
+              projectId={project.id}
+              notes={notes}
+              loading={notesLoading}
+              members={members}
+              onAddNote={onAddNote}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- NotesPanel (messages-style notes & updates) ----------
+
+function formatNoteTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function NotesPanel({ projectId, notes, loading, members, onAddNote }) {
+  const [author, setAuthor] = useState(() => {
+    try {
+      // "warboard-note-author" is the pre-rename key; fall back to it once.
+      return localStorage.getItem("task-tracker-note-author") || localStorage.getItem("warboard-note-author") || "";
+    } catch (e) { return ""; }
+  });
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const feedRef = useRef(null);
+
+  useEffect(() => {
+    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+  }, [notes.length]);
+
+  async function handleSend(e) {
+    e.preventDefault();
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setSending(true);
+    setError("");
+    try {
+      await onAddNote(projectId, trimmed, author.trim());
+      setText("");
+      try { localStorage.setItem("task-tracker-note-author", author.trim()); } catch (e2) {}
+    } catch (err) {
+      setError("Could not post. Please try again.");
+    }
+    setSending(false);
+  }
+
+  return (
+    <div className="notes-col">
+      <h3 className="notes-title">Notes &amp; updates</h3>
+
+      <div className="notes-feed" ref={feedRef}>
+        {loading && <p className="notes-empty">Loading&hellip;</p>}
+        {!loading && notes.length === 0 && (
+          <p className="notes-empty">No notes yet. Leave the first update.</p>
+        )}
+        {!loading && notes.map((n) => (
+          <div key={n.id} className="note-msg">
+            <div className="note-msg-head">
+              <span className="note-author">{n.author || "Someone"}</span>
+              <span className="note-time">{formatNoteTime(n.createdAt)}</span>
+            </div>
+            <p className="note-text">{n.text}</p>
+          </div>
+        ))}
+      </div>
+
+      <form onSubmit={handleSend} className="note-compose">
+        <input
+          type="text"
+          id="note-author"
+          value={author}
+          onChange={(e) => setAuthor(e.target.value)}
+          placeholder="Your name"
+          className="field note-author-input"
+          list="notes-author-options"
+        />
+        <datalist id="notes-author-options">
+          {members.map((m) => <option key={m.id} value={m.name} />)}
+        </datalist>
+        <div className="note-compose-row">
+          <textarea
+            id="note-text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) { handleSend(e); }
+            }}
+            placeholder="Add a note or update&hellip;"
+            className="field note-input"
+            rows={2}
+          />
+          <button type="submit" disabled={sending || !text.trim()} className="btn-primary note-send">Post</button>
+        </div>
+        {error && <p className="err">{error}</p>}
+      </form>
+    </div>
+  );
+}
+
+// ---------- Drag handle icon ----------
+
+function DragHandleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <circle cx="5" cy="3" r="1.3" /><circle cx="11" cy="3" r="1.3" />
+      <circle cx="5" cy="8" r="1.3" /><circle cx="11" cy="8" r="1.3" />
+      <circle cx="5" cy="13" r="1.3" /><circle cx="11" cy="13" r="1.3" />
+    </svg>
+  );
+}
+
+// ---------- shared reorder logic (native HTML5 DnD + keyboard) ----------
+
+function useReorderable(items, onReorder) {
+  const dragIdRef = useRef(null);
+  const [overId, setOverId] = useState(null);
+
+  const handleDragStart = useCallback((id) => (e) => {
+    dragIdRef.current = id;
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", id); } catch (_) {}
+  }, []);
+
+  const handleDragOver = useCallback((id) => (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (id !== overId) setOverId(id);
+  }, [overId]);
+
+  const handleDrop = useCallback((id) => (e) => {
+    e.preventDefault();
+    const draggedId = dragIdRef.current;
+    setOverId(null);
+    dragIdRef.current = null;
+    if (!draggedId || draggedId === id) return;
+    onReorder(draggedId, id);
+  }, [onReorder]);
+
+  const handleDragEnd = useCallback(() => {
+    dragIdRef.current = null;
+    setOverId(null);
+  }, []);
+
+  const moveByKeyboard = useCallback((id, direction) => {
+    const idx = items.findIndex((it) => it.id === id);
+    if (idx === -1) return;
+    const targetIdx = idx + direction;
+    if (targetIdx < 0 || targetIdx >= items.length) return;
+    onReorder(id, items[targetIdx].id);
+  }, [items, onReorder]);
+
+  return { overId, handleDragStart, handleDragOver, handleDrop, handleDragEnd, moveByKeyboard };
+}
+
+// ---------- empty state ----------
+
+function EmptyState({ filter, onAdd, onClearFilter }) {
+  const filtered = filter && filter !== "all";
+  return (
+    <div className="empty">
+      <p>{filtered ? "No projects with this status." : "No projects yet."}</p>
+      {filtered ? (
+        <button type="button" className="link" onClick={onClearFilter}>Show all projects</button>
+      ) : (
+        <button type="button" className="link" onClick={onAdd}>Add project</button>
+      )}
+    </div>
+  );
+}
+
+// ---------- ProjectRow (List view) ----------
+
+function ProjectRow({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReorder }) {
+  return (
+    <div
+      onDragOver={dnd.handleDragOver(project.id)}
+      onDrop={dnd.handleDrop(project.id)}
+      className={"row" + (isDraggingOver ? " is-over" : "")}
+      style={{ "--status": statusVar(project.status) }}
+    >
+      <button
+        type="button"
+        draggable
+        onDragStart={dnd.handleDragStart(project.id)}
+        onDragEnd={dnd.handleDragEnd}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp") { e.preventDefault(); onKeyReorder(project.id, -1); }
+          if (e.key === "ArrowDown") { e.preventDefault(); onKeyReorder(project.id, 1); }
+        }}
+        aria-label={"Reorder " + project.name}
+        className="handle"
+      >
+        <DragHandleIcon />
+      </button>
+
+      <div
+        onClick={onClick}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter") onClick(); }}
+        className="rowmain"
+      >
+        <div style={{ minWidth: 0 }}>
+          <p className="name">{project.name}</p>
+          {project.description && <p className="desc">{project.description}</p>}
+        </div>
+        <Meta project={project} typeLabel={typeLabel} showStatus={true} />
+      </div>
+    </div>
+  );
+}
+
+function ProjectListView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter }) {
+  const dnd = useReorderable(projects, onReorder);
+  if (projects.length === 0) {
+    return <EmptyState filter={filter} onAdd={onAdd} onClearFilter={onClearFilter} />;
+  }
+  return (
+    <div className="list">
+      {projects.map((project) => (
+        <ProjectRow
+          key={project.id}
+          project={project}
+          typeLabel={typesById[project.typeId]?.label ?? "Unknown"}
+          onClick={() => onSelectProject(project)}
+          dnd={dnd}
+          isDraggingOver={dnd.overId === project.id}
+          onKeyReorder={dnd.moveByKeyboard}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------- ProjectCard (Tiles + Phases) ----------
+
+function ProjectCard({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReorder, showStatus }) {
+  return (
+    <div
+      onDragOver={dnd.handleDragOver(project.id)}
+      onDrop={dnd.handleDrop(project.id)}
+      className={"card" + (isDraggingOver ? " is-over" : "")}
+      data-plain={showStatus ? "false" : "true"}
+      style={{ "--status": statusVar(project.status) }}
+    >
+      <button
+        type="button"
+        draggable
+        onDragStart={dnd.handleDragStart(project.id)}
+        onDragEnd={dnd.handleDragEnd}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); onKeyReorder(project.id, -1); }
+          if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); onKeyReorder(project.id, 1); }
+        }}
+        aria-label={"Reorder " + project.name}
+        className="handle"
+      >
+        <DragHandleIcon />
+      </button>
+
+      <div
+        onClick={onClick}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === "Enter") onClick(); }}
+        className="card-main"
+      >
+        <p className="name">{project.name}</p>
+        {project.description && <p className="desc">{project.description}</p>}
+      </div>
+      <Meta project={project} typeLabel={typeLabel} showStatus={showStatus} />
+    </div>
+  );
+}
+
+function ProjectTilesView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter }) {
+  const dnd = useReorderable(projects, onReorder);
+  if (projects.length === 0) {
+    return <EmptyState filter={filter} onAdd={onAdd} onClearFilter={onClearFilter} />;
+  }
+  return (
+    <div className="tiles">
+      {projects.map((project) => (
+        <ProjectCard
+          key={project.id}
+          project={project}
+          typeLabel={typesById[project.typeId]?.label ?? "Unknown"}
+          onClick={() => onSelectProject(project)}
+          dnd={dnd}
+          isDraggingOver={dnd.overId === project.id}
+          onKeyReorder={dnd.moveByKeyboard}
+          showStatus={true}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------- Phases (Kanban) ----------
+
+function PhaseColumn({ status, label, projects, typesById, onSelectProject, dnd, onDropOnColumn, onKeyReorder }) {
+  const [isColumnOver, setIsColumnOver] = useState(false);
+  return (
+    <div className="col" style={{ "--status": statusVar(status) }}>
+      <div className="col-head">
+        <h3>{label}</h3>
+        <span className="col-count">{projects.length}</span>
+      </div>
+      <div
+        onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setIsColumnOver(true); }}
+        onDragLeave={() => setIsColumnOver(false)}
+        onDrop={(e) => { e.preventDefault(); setIsColumnOver(false); onDropOnColumn(status); }}
+        className={"drop" + (isColumnOver ? " over" : "")}
+      >
+        {projects.length === 0 && <p className="drop-empty">Drag a project here</p>}
+        {projects.map((project) => (
+          <ProjectCard
+            key={project.id}
+            project={project}
+            typeLabel={typesById[project.typeId]?.label ?? "Unknown"}
+            onClick={() => onSelectProject(project)}
+            dnd={dnd}
+            isDraggingOver={dnd.overId === project.id}
+            onKeyReorder={onKeyReorder}
+            showStatus={false}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProjectPhasesView({ projects, typesById, onSelectProject, onReorderWithinStatus, onMoveToStatus }) {
+  const projectsByStatus = { ideation: [], inprogress: [], completed: [], dead: [] };
+  for (const p of projects) projectsByStatus[p.status].push(p);
+
+  const dnd = useReorderable(projects, (draggedId, overId) => {
+    const dragged = projects.find((p) => p.id === draggedId);
+    const over = projects.find((p) => p.id === overId);
+    if (!dragged || !over) return;
+    if (dragged.status === over.status) {
+      onReorderWithinStatus(draggedId, overId);
+    } else {
+      onMoveToStatus(draggedId, over.status, overId);
+    }
+  });
+
+  function handleKeyReorder(id, direction) {
+    const project = projects.find((p) => p.id === id);
+    if (!project) return;
+    const siblings = projectsByStatus[project.status];
+    const idx = siblings.findIndex((p) => p.id === id);
+    const targetIdx = idx + direction;
+    if (targetIdx >= 0 && targetIdx < siblings.length) {
+      onReorderWithinStatus(id, siblings[targetIdx].id);
+    }
+  }
+
+  return (
+    <PhasesInner
+      projectsByStatus={projectsByStatus}
+      typesById={typesById}
+      onSelectProject={onSelectProject}
+      dnd={dnd}
+      handleKeyReorder={handleKeyReorder}
+      onMoveToStatus={onMoveToStatus}
+    />
+  );
+}
+
+function PhasesInner({ projectsByStatus, typesById, onSelectProject, dnd, handleKeyReorder, onMoveToStatus }) {
+  const draggedIdRef = useRef(null);
+
+  // Wrap handleDragStart to also remember id for column-level drops.
+  const wrappedDnd = useMemo(() => ({
+    ...dnd,
+    handleDragStart: (id) => (e) => {
+      draggedIdRef.current = id;
+      dnd.handleDragStart(id)(e);
+    },
+    handleDragEnd: () => {
+      draggedIdRef.current = null;
+      dnd.handleDragEnd();
+    },
+  }), [dnd]);
+
+  function onDropOnColumn(status) {
+    const draggedId = draggedIdRef.current;
+    draggedIdRef.current = null;
+    if (!draggedId) return;
+    onMoveToStatus(draggedId, status, undefined);
+  }
+
+  return (
+    <div className="phases">
+      {STATUSES.map((status) => (
+        <PhaseColumn
+          key={status}
+          status={status}
+          label={STATUS_LABELS[status]}
+          projects={projectsByStatus[status]}
+          typesById={typesById}
+          onSelectProject={onSelectProject}
+          dnd={wrappedDnd}
+          onDropOnColumn={onDropOnColumn}
+          onKeyReorder={handleKeyReorder}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ---------- App ----------
+
+function App() {
+  const db = useDb();
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    loadSettings().then(
+      (s) => { if (!cancelled) { setSettings(s); setSettingsLoaded(true); } },
+      (e) => { console.error(e); if (!cancelled) setSettingsLoaded(true); }
+    );
+    return () => { cancelled = true; };
+  }, []);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [folderHandle, setFolderHandle] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncSummary, setSyncSummary] = useState(null);
+  const [syncError, setSyncError] = useState("");
+  const [needsFolderClick, setNeedsFolderClick] = useState(false);
+  const syncingRef = useRef(false);
+  const rawProjects = useCollection(db, "projects");
+  const rawTypes = useCollection(db, "types");
+  const rawMembers = useCollection(db, "members");
+
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState(undefined);
+  const [draftProject, setDraftProject] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [view, setView] = useState("list");
+  const [manageModal, setManageModal] = useState(null); // null | "members" | "types"
+  const [ideaCaptureOpen, setIdeaCaptureOpen] = useState(false);
+
+  const notesPath = editingProject ? "projects/" + editingProject.id + "/notes" : null;
+  const rawNotes = useCollection(db, notesPath);
+  const notes = useMemo(
+    () => [...(rawNotes ?? [])].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0)),
+    [rawNotes]
+  );
+  const notesLoading = Boolean(editingProject) && rawNotes === null;
+
+  useEffect(() => {
+    ensureSeedTypes(db, rawTypes);
+  }, [db, rawTypes]);
+
+  const projects = rawProjects ?? [];
+  const types = rawTypes && rawTypes.length > 0 ? rawTypes : SEED_TYPES;
+
+  const typesById = useMemo(() => {
+    const map = {};
+    for (const t of types) map[t.id] = t;
+    return map;
+  }, [types]);
+
+  const sortedProjects = useMemo(
+    () => [...projects].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
+    [projects]
+  );
+  const visibleProjects = statusFilter === "all" ? sortedProjects : sortedProjects.filter((p) => p.status === statusFilter);
+
+  const isTypeInUse = useCallback((id) => projects.some((p) => p.typeId === id), [projects]);
+
+  const members = useMemo(
+    () => [...(rawMembers ?? [])].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    [rawMembers]
+  );
+  const isMemberInUse = useCallback((name) => projects.some((p) => p.assignedTo === name), [projects]);
+
+  function openAddForm() { setEditingProject(undefined); setDraftProject(null); setIsFormOpen(true); }
+  function openEditForm(project) { setEditingProject(project); setDraftProject(null); setIsFormOpen(true); }
+  function closeForm() { setIsFormOpen(false); setEditingProject(undefined); setDraftProject(null); }
+
+  async function handleGenerateIdea(ideaText, signal) {
+    const drafts = await draftProjectsFromIdea({ ideaText, types, signal });
+    if (drafts.length === 1) {
+      setEditingProject(undefined);
+      setDraftProject(drafts[0]);
+      setIsFormOpen(true);
+      setIdeaCaptureOpen(false);
+      return;
+    }
+    // Several projects found: add them all to Ideation.
+    const baseOrder = projects.reduce((max, p) => Math.max(max, p.order ?? 0), -1) + 1;
+    const now = Date.now();
+    for (let i = 0; i < drafts.length; i++) {
+      const d = drafts[i];
+      const id = genId();
+      await db.doc("projects/" + id).set({
+        name: d.name,
+        description: d.description,
+        typeId: d.typeId,
+        priority: d.priority,
+        assignedTo: "",
+        status: "ideation",
+        order: baseOrder + i,
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (d.excerpt) {
+        await db.doc("projects/" + id + "/notes/" + genId()).set({ text: d.excerpt, author: "Describe an idea", createdAt: now });
+      }
+    }
+    setStatusFilter("all");
+    setIdeaCaptureOpen(false);
+  }
+
+  // ---- notes folder sync ----
+
+  useEffect(() => {
+    if (!db) return;
+    let cancelled = false;
+    getSavedFolder(db).then((h) => { if (!cancelled && h) setFolderHandle(h); });
+    return () => { cancelled = true; };
+  }, [db]);
+
+  const runSync = useCallback(async (handleOverride, { auto, force } = {}) => {
+    const handle = handleOverride || folderHandle;
+    if (!db || !handle || syncingRef.current) return;
+    if (auto) {
+      // Automatic runs can't prompt: needs a click if permission lapsed.
+      const perm = await folderPermission(handle);
+      if (perm !== "granted") { setNeedsFolderClick(true); return; }
+    }
+    if (!settings.hasApiKey) { setSyncError("Add an API key for the selected AI provider in Settings to sync notes."); return; }
+    syncingRef.current = true;
+    setSyncing(true);
+    setSyncError("");
+    setNeedsFolderClick(false);
+    let leased = false;
+    try {
+      // Server-side lease: only one tab/window syncs at a time.
+      const lease = await fetch("/api/sync/acquire", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ owner: TAB_ID }),
+      });
+      if (lease.status === 409) throw { message: "A sync is already running in another tab or window. Try again in a minute." };
+      if (!lease.ok) throw { message: "Could not start sync: the Task Tracker server did not respond." };
+      leased = true;
+      // Another tab may have synced since this one loaded; decide from current data.
+      await db.reload();
+      const renew = () => {
+        fetch("/api/sync/acquire", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ owner: TAB_ID }),
+        }).catch(() => {});
+      };
+      const summary = await syncNotes({ store: db, handle, force: Boolean(force), onProgress: renew });
+      setSyncSummary({ ...summary, at: Date.now() });
+      const at = Date.now();
+      setSettings((prev) => ({ ...prev, lastSyncAt: at }));
+      saveSettings({ lastSyncAt: at }).catch((e) => console.error(e));
+    } catch (err) {
+      setSyncError((err && err.message) || "Sync failed.");
+    } finally {
+      if (leased) {
+        fetch("/api/sync/release", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ owner: TAB_ID }),
+        }).catch(() => {});
+      }
+      syncingRef.current = false;
+      setSyncing(false);
+    }
+  }, [db, folderHandle, settings]);
+
+  const runSyncRef = useRef(runSync);
+  useEffect(() => { runSyncRef.current = runSync; }, [runSync]);
+
+  async function handleSyncNow() {
+    if (!folderHandle) { setSettingsOpen(true); return; }
+    await runSync(undefined, { auto: false });
+  }
+
+  async function handlePickFolder() {
+    try {
+      const h = await pickFolder(db);
+      if (h) {
+        setFolderHandle(h);
+        setSyncError("");
+        setNeedsFolderClick(false);
+      }
+    } catch (err) {
+      setSyncError((err && err.message) || "Could not open the folder.");
+    }
+  }
+
+  // Daily schedule: catch up on load if a scheduled time was missed, then
+  // arm a timer for the next occurrence while the tab stays open.
+  const settingsRef = useRef(settings);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
+  useEffect(() => {
+    if (!db || !folderHandle || !settingsLoaded || !settings.dailyEnabled) return;
+    let timer;
+    function arm() {
+      const now = Date.now();
+      const due = lastScheduledTime(now, settingsRef.current.dailyTime);
+      if ((settingsRef.current.lastSyncAt || 0) < due) runSyncRef.current(undefined, { auto: true });
+      const delay = Math.max(1000, nextScheduledTime(now, settingsRef.current.dailyTime) - now);
+      timer = setTimeout(arm, Math.min(delay, 2147483000));
+    }
+    arm();
+    return () => clearTimeout(timer);
+  }, [db, folderHandle, settingsLoaded, settings.dailyEnabled, settings.dailyTime]);
+
+  async function handleSaveSettings(patch) {
+    const next = await saveSettings(patch);
+    setSettings(next);
+  }
+
+  let syncStatus = "";
+  if (syncing) syncStatus = "Syncing notes…";
+  else if (syncError) syncStatus = syncError;
+  else if (needsFolderClick) syncStatus = "Click “Sync notes now” to re-allow access to the notes folder.";
+  else if (syncSummary) {
+    const s = syncSummary;
+    syncStatus = "Last sync " + new Date(s.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) +
+      ": " + s.created + " created, " + s.updated + " updated, " + s.skipped + " files unchanged" +
+      (s.empty ? ", " + s.empty + " with no projects found" : "") +
+      (s.failed.length ? ", " + s.failed.length + " failed (" + s.failed.map((f) => f.file + ": " + f.message).join("; ") + ")" : "") + "." +
+      (s.created + s.updated === 0 && s.failed.length === 0 && s.skipped > 0
+        ? " Nothing changed since the last sync (" + s.files.filter((f) => f.status === "unchanged").map((f) => f.name).join(", ") + ")."
+        : "");
+  } else if (settings.lastSyncAt) {
+    syncStatus = "Last synced " + new Date(settings.lastSyncAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + ".";
+  } else if (!folderHandle) {
+    syncStatus = "No notes folder selected yet. Open Settings to choose one.";
+  }
+
+  async function handleSaveProject(input) {
+    if (!db) throw new Error("db unavailable");
+    if (input.id) {
+      await db.doc("projects/" + input.id).update({
+        name: input.name,
+        description: input.description,
+        typeId: input.typeId,
+        priority: input.priority,
+        assignedTo: input.assignedTo,
+        status: input.status,
+        updatedAt: Date.now(),
+      });
+    } else {
+      const maxOrder = projects.reduce((max, p) => Math.max(max, p.order ?? 0), -1);
+      const id = genId();
+      await db.doc("projects/" + id).set({
+        name: input.name,
+        description: input.description,
+        typeId: input.typeId,
+        priority: input.priority,
+        assignedTo: input.assignedTo,
+        status: input.status,
+        order: maxOrder + 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+  }
+
+  async function handleDeleteProject(id) {
+    if (!db) throw new Error("db unavailable");
+    await db.doc("projects/" + id).delete();
+  }
+
+  async function handleAddNote(projectId, text, author) {
+    if (!db) throw new Error("db unavailable");
+    const id = genId();
+    await db.doc("projects/" + projectId + "/notes/" + id).set({
+      text,
+      author: author || "",
+      createdAt: Date.now(),
+    });
+  }
+
+  async function handleAddType(label) {
+    if (!db) return;
+    const id = genId();
+    await db.doc("types/" + id).set({ label, isBuiltIn: false });
+  }
+
+  async function handleDeleteType(id) {
+    if (isTypeInUse(id)) return { ok: false, reason: "This type is assigned to one or more projects." };
+    if (!db) return { ok: false, reason: "Not connected." };
+    await db.doc("types/" + id).delete();
+    return { ok: true };
+  }
+
+  async function handleAddMember(name) {
+    if (!db) throw new Error("db unavailable");
+    await db.doc("members/" + genId()).set({ name, createdAt: Date.now() });
+  }
+
+  async function handleDeleteMember(member) {
+    if (isMemberInUse(member.name)) return { ok: false, reason: "This member is assigned to one or more projects." };
+    if (!db) return { ok: false, reason: "Not connected." };
+    await db.doc("members/" + member.id).delete();
+    return { ok: true };
+  }
+
+  // Reordering: recompute order for the full sorted list, write only changed docs.
+  async function persistOrder(newOrderedIds) {
+    if (!db) return;
+    const byId = new Map(projects.map((p) => [p.id, p]));
+    const writes = [];
+    newOrderedIds.forEach((id, index) => {
+      const p = byId.get(id);
+      if (p && (p.order ?? 0) !== index) {
+        writes.push(db.doc("projects/" + id).update({ order: index }));
+      }
+    });
+    await Promise.all(writes);
+  }
+
+  async function handleReorder(activeId, overId) {
+    if (activeId === overId) return;
+    const sorted = [...sortedProjects];
+    const oldIndex = sorted.findIndex((p) => p.id === activeId);
+    const newIndex = sorted.findIndex((p) => p.id === overId);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const [moved] = sorted.splice(oldIndex, 1);
+    sorted.splice(newIndex, 0, moved);
+    await persistOrder(sorted.map((p) => p.id));
+  }
+
+  async function handleReorderWithinStatus(activeId, overId) {
+    await handleReorder(activeId, overId);
+  }
+
+  async function handleMoveToStatus(activeId, status, beforeId) {
+    if (!db) return;
+    const sorted = [...sortedProjects];
+    const activeIndex = sorted.findIndex((p) => p.id === activeId);
+    if (activeIndex === -1) return;
+    const [moved] = sorted.splice(activeIndex, 1);
+    const movedWithStatus = { ...moved, status };
+
+    let insertAt = -1;
+    if (beforeId) insertAt = sorted.findIndex((p) => p.id === beforeId);
+    if (insertAt === -1) sorted.push(movedWithStatus);
+    else sorted.splice(insertAt, 0, movedWithStatus);
+
+    await db.doc("projects/" + activeId).update({ status, updatedAt: Date.now() });
+    await persistOrder(sorted.map((p) => p.id));
+  }
+
+  const connectionState = db === null ? "unavailable" : db === undefined ? "loading" : "ready";
+  const dataLoading = connectionState === "loading" || (db && (rawProjects === null || rawTypes === null || rawMembers === null));
+  const showContent = !dataLoading && connectionState !== "unavailable";
+
+  return (
+    <div>
+      <Header
+        onAddProject={openAddForm}
+        onManageMembers={() => setManageModal("members")}
+        onManageTypes={() => setManageModal("types")}
+        onDescribeIdea={() => setIdeaCaptureOpen(true)}
+        showIdeaButton={true}
+        ideaButtonDisabled={!settings.hasApiKey || connectionState !== "ready"}
+        view={view}
+        onViewChange={setView}
+        connectionState={connectionState}
+        onSyncNow={handleSyncNow}
+        syncing={syncing}
+        syncStatus={syncStatus}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+
+      {dataLoading && <p className="note">Loading&hellip;</p>}
+
+      {!dataLoading && connectionState === "unavailable" && (
+        <p className="empty">
+          Can’t reach the Task Tracker server. Start it with npm run dev (API on port 3001).
+        </p>
+      )}
+
+      {showContent && (
+        <React.Fragment>
+          <PipelineStrip
+            projects={sortedProjects}
+            value={statusFilter}
+            onChange={setStatusFilter}
+            interactive={view !== "phases"}
+          />
+
+          {view === "list" && (
+            <ProjectListView
+              projects={visibleProjects}
+              typesById={typesById}
+              onSelectProject={openEditForm}
+              onReorder={handleReorder}
+              filter={statusFilter}
+              onAdd={openAddForm}
+              onClearFilter={() => setStatusFilter("all")}
+            />
+          )}
+          {view === "tiles" && (
+            <ProjectTilesView
+              projects={visibleProjects}
+              typesById={typesById}
+              onSelectProject={openEditForm}
+              onReorder={handleReorder}
+              filter={statusFilter}
+              onAdd={openAddForm}
+              onClearFilter={() => setStatusFilter("all")}
+            />
+          )}
+          {view === "phases" && (
+            <ProjectPhasesView
+              projects={sortedProjects}
+              typesById={typesById}
+              onSelectProject={openEditForm}
+              onReorderWithinStatus={handleReorderWithinStatus}
+              onMoveToStatus={handleMoveToStatus}
+            />
+          )}
+        </React.Fragment>
+      )}
+
+      {manageModal === "members" && (
+        <MembersModal
+          members={members}
+          isMemberInUse={isMemberInUse}
+          onAddMember={handleAddMember}
+          onDeleteMember={handleDeleteMember}
+          onClose={() => setManageModal(null)}
+        />
+      )}
+
+      {manageModal === "types" && (
+        <TypesModal
+          types={types}
+          isTypeInUse={isTypeInUse}
+          onAddType={handleAddType}
+          onDeleteType={handleDeleteType}
+          onClose={() => setManageModal(null)}
+        />
+      )}
+
+      {ideaCaptureOpen && (
+        <IdeaCapture
+          onGenerate={handleGenerateIdea}
+          onClose={() => setIdeaCaptureOpen(false)}
+        />
+      )}
+
+      {settingsOpen && (
+        <SettingsModal
+          settings={settings}
+          folderName={folderHandle ? folderHandle.name : ""}
+          folderSupported={folderApiSupported}
+          onPickFolder={handlePickFolder}
+          onSave={handleSaveSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {isFormOpen && (
+        <ProjectForm
+          project={editingProject}
+          draft={draftProject}
+          types={types}
+          members={members}
+          onClose={closeForm}
+          onSave={handleSaveProject}
+          onDelete={handleDeleteProject}
+          onManageMembers={() => setManageModal("members")}
+          onManageTypes={() => setManageModal("types")}
+          notes={notes}
+          notesLoading={notesLoading}
+          onAddNote={handleAddNote}
+        />
+      )}
+    </div>
+  );
+}
+
+export default App;
