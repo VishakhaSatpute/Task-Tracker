@@ -175,7 +175,8 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
           await saveProgress();
         } else {
           const projects = store.peekCollection("projects");
-          const maxOrder = projects.reduce((m, q) => Math.max(m, q.order ?? 0), -1);
+          // New projects go to the top of the manual order.
+          const minOrder = projects.reduce((m, q) => Math.min(m, q.order ?? 0), 0);
           const projectId = genId();
           await store.doc("projects/" + projectId).set({
             name: p.name,
@@ -184,7 +185,7 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
             priority: p.priority,
             assignedTo: p.assignedTo || "",
             status: "ideation",
-            order: maxOrder + 1,
+            order: minOrder - 1,
             sourceFile: entry.name,
             createdAt: now,
             updatedAt: now,

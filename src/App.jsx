@@ -146,6 +146,27 @@ function PipelineStrip({ projects, value, onChange, interactive }) {
     ...STATUSES.map((s) => ({ value: s, label: STATUS_LABELS[s], count: counts[s] })),
   ];
 
+  if (interactive) {
+    return (
+      <nav className="tabs" aria-label="Filter by status">
+        {items.map((it) => (
+          <button
+            key={it.value}
+            type="button"
+            className="tab"
+            aria-pressed={value === it.value}
+            onClick={() => onChange(it.value)}
+            style={it.value === "all" ? undefined : { "--status": statusVar(it.value) }}
+          >
+            {it.value !== "all" && <span className="dot" aria-hidden="true" />}
+            <span>{it.label}</span>
+            <span className="tab-count">{it.count}</span>
+          </button>
+        ))}
+      </nav>
+    );
+  }
+
   return (
     <div className="pipeline">
       <div className="bar" aria-hidden="true">
@@ -233,11 +254,8 @@ const SORT_OPTIONS = [
 const PRIORITY_RANK = { high: 3, medium: 2, low: 1 };
 const UNASSIGNED_FILTER = "__unassigned__";
 
-function MemberMultiSelect({ members, value, onChange }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef(null);
-  const triggerRef = useRef(null);
-
+// Closes a popover on outside click or Escape (Escape returns focus to the trigger).
+function useDismiss(open, setOpen, rootRef, triggerRef) {
   useEffect(() => {
     if (!open) return undefined;
     function onDown(e) {
@@ -252,31 +270,44 @@ function MemberMultiSelect({ members, value, onChange }) {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, setOpen, rootRef, triggerRef]);
+}
+
+const ChevronIcon = () => (
+  <svg className="chev" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 4.5 6 7.5 9 4.5" />
+  </svg>
+);
+
+function MemberMultiSelect({ members, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  useDismiss(open, setOpen, rootRef, triggerRef);
 
   const options = [{ key: UNASSIGNED_FILTER, label: "Unassigned", name: "" }, ...members.map((m) => ({ key: m.name, label: m.name, name: m.name }))];
   const first = value[0] === UNASSIGNED_FILTER ? "Unassigned" : value[0];
-  const summary = value.length === 0 ? "All members" : value.length === 1 ? first : first + " +" + (value.length - 1);
+  const summary = value.length === 0 ? "All" : value.length === 1 ? first : first + " +" + (value.length - 1);
 
   function toggle(key) {
     onChange(value.includes(key) ? value.filter((v) => v !== key) : [...value, key]);
   }
 
   return (
-    <div className="fb-field ms" data-active={value.length > 0} ref={rootRef}>
-      <span className="fb-cap">Member</span>
-      <span className="fb-ctl">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+    <div className="fb-pop" ref={rootRef}>
+      <button type="button" ref={triggerRef} className="pill" data-active={value.length > 0} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
           <circle cx="7" cy="4.8" r="2.4" /><path d="M2.5 12c.5-2.4 2.3-3.6 4.5-3.6s4 1.2 4.5 3.6" />
         </svg>
-        <button type="button" ref={triggerRef} className="ms-trigger" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {summary}
-        </button>
-      </span>
+        <span className="pill-k">Member</span>
+        <span className="pill-v">{summary}</span>
+        <ChevronIcon />
+      </button>
       {open && (
-        <div className="ms-pop" role="group" aria-label="Filter by members">
+        <div className="pop left" role="group" aria-label="Filter by members">
+          <p className="pop-head">Members</p>
           {options.map((o) => (
-            <label className="ms-opt" key={o.key}>
+            <label className="ms-opt" key={o.key} data-on={value.includes(o.key)}>
               <input type="checkbox" checked={value.includes(o.key)} onChange={() => toggle(o.key)} />
               {o.name ? <span className="avatar" aria-hidden="true">{initials(o.name)}</span> : <span className="avatar none" aria-hidden="true" />}
               <span className="ms-name">{o.label}</span>
@@ -284,8 +315,53 @@ function MemberMultiSelect({ members, value, onChange }) {
           ))}
           <div className="ms-foot">
             <button type="button" className="link" onClick={() => onChange([])} disabled={value.length === 0}>Clear</button>
-            <button type="button" className="link" onClick={() => setOpen(false)}>Done</button>
+            <button type="button" className="btn-primary pop-done" onClick={() => setOpen(false)}>Done</button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SORT_GROUPS = [
+  { head: "Manual", values: ["manual"] },
+  { head: "Date created", values: ["newest", "oldest"] },
+  { head: "Priority", values: ["prio-desc", "prio-asc"] },
+];
+const SORT_SHORT = { manual: "Manual order", newest: "Newest first", oldest: "Oldest first", "prio-desc": "Priority high to low", "prio-asc": "Priority low to high" };
+const SORT_ITEM_LABEL = { manual: "Manual order", newest: "Newest first", oldest: "Oldest first", "prio-desc": "High to low", "prio-asc": "Low to high" };
+
+function SortMenu({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  useDismiss(open, setOpen, rootRef, triggerRef);
+
+  return (
+    <div className="fb-pop" ref={rootRef}>
+      <button type="button" ref={triggerRef} className="pill" data-active={value !== "manual"} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 2v10M1.8 9.8 4 12l2.2-2.2M10 12V2M7.8 4.2 10 2l2.2 2.2" />
+        </svg>
+        <span className="pill-k">Sort</span>
+        <span className="pill-v">{SORT_SHORT[value]}</span>
+        <ChevronIcon />
+      </button>
+      {open && (
+        <div className="pop right sort-pop" role="listbox" aria-label="Sort by">
+          {SORT_GROUPS.map((g) => (
+            <div key={g.head}>
+              <p className="pop-head">{g.head}</p>
+              {g.values.map((v) => (
+                <button key={v} type="button" role="option" aria-selected={value === v} className="sort-opt" onClick={() => { onChange(v); setOpen(false); triggerRef.current?.focus(); }}>
+                  <span>{SORT_ITEM_LABEL[v]}</span>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M2.8 7.4 5.6 10.2 11.2 4" />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -302,49 +378,42 @@ function FilterBar({
   const statusActive = statusFilter !== "all" && view !== "phases";
   const memberLabel = (v) => (v === UNASSIGNED_FILTER ? "Unassigned" : v);
   const anyFilter = memberActive || statusActive;
-  const count = view === "phases" ? (memberActive ? "filtered" : "all") : null;
+  const showCount = view !== "phases";
 
   return (
     <div className="filterbar" role="group" aria-label="Sort and filter projects">
       <div className="fb-row">
         <MemberMultiSelect members={members} value={memberFilter} onChange={onMemberFilterChange} />
-
-        {showSort && (
-          <label className="fb-field" data-active={sortActive}>
-            <span className="fb-cap">Sort by</span>
-            <span className="fb-ctl">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 2v10M1.8 9.8 4 12l2.2-2.2M10 12V2M7.8 4.2 10 2l2.2 2.2" />
-              </svg>
-              <select value={sortMode} onChange={(e) => onSortChange(e.target.value)}>
-                {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </span>
-          </label>
-        )}
-
-        {sortActive && <p className="fb-hint">Drag-reorder is off while sorted.</p>}
-
-        <p className="fb-count" aria-live="polite">
-          {count === null ? visibleCount + " of " + totalCount + " projects" : totalCount + " projects"}
-        </p>
+        <div className="fb-spacer" />
+        {showCount && <p className="fb-count" aria-live="polite">{visibleCount} of {totalCount} projects</p>}
+        {showSort && <SortMenu value={sortMode} onChange={onSortChange} />}
       </div>
 
-      {anyFilter && (
+      {(anyFilter || sortActive) && (
         <div className="fb-chips">
           {memberFilter.map((v) => (
             <span className="chip" key={v}>
-              Member: {memberLabel(v)}
-              <button type="button" onClick={() => onMemberFilterChange(memberFilter.filter((x) => x !== v))} aria-label={"Remove member filter " + memberLabel(v)}>×</button>
+              <span className="chip-k">Member</span> <b>{memberLabel(v)}</b>
+              <button type="button" onClick={() => onMemberFilterChange(memberFilter.filter((x) => x !== v))} aria-label={"Remove member filter " + memberLabel(v)}>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8" /></svg>
+              </button>
             </span>
           ))}
           {statusActive && (
             <span className="chip">
-              Status: {STATUS_LABELS[statusFilter] || statusFilter}
-              <button type="button" onClick={onStatusClear} aria-label="Remove status filter">×</button>
+              <span className="chip-k">Status</span> <b>{STATUS_LABELS[statusFilter] || statusFilter}</b>
+              <button type="button" onClick={onStatusClear} aria-label="Remove status filter">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8" /></svg>
+              </button>
             </span>
           )}
-          <button type="button" className="link" onClick={onClearAll}>Clear all</button>
+          {anyFilter && <button type="button" className="link" onClick={onClearAll}>Clear all</button>}
+          {sortActive && (
+            <p className="fb-hint">
+              <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true"><circle cx="7" cy="7" r="5.5" /><path d="M7 6.2V10M7 4v.1" /></svg>
+              Drag to reorder is off while sorted
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -1069,8 +1138,16 @@ function NotesPanel({ projectId, notes, loading, members, onAddNote, onEditNote,
                     </>
                   ) : (
                     <>
-                      <button type="button" className="link small" onClick={() => startEdit(n)}>Edit</button>
-                      <button type="button" className="link small danger" onClick={() => { setConfirmId(n.id); setNoteError(""); }}>Delete</button>
+                      <button type="button" className="icon-btn" onClick={() => startEdit(n)} aria-label="Edit note" title="Edit">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M9.4 2.2a1.3 1.3 0 0 1 1.8 1.8L4.6 10.6 2 11.2l.6-2.6z" />
+                        </svg>
+                      </button>
+                      <button type="button" className="icon-btn danger" onClick={() => { setConfirmId(n.id); setNoteError(""); }} aria-label="Delete note" title="Delete">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M2.5 3.8h9M5.4 3.8V2.6h3.2v1.2M3.7 3.8l.5 7.6h5.6l.5-7.6M5.8 6v3.6M8.2 6v3.6" />
+                        </svg>
+                      </button>
                     </>
                   )}
                 </div>
@@ -1229,13 +1306,33 @@ function ProjectRow({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReo
   );
 }
 
-function ProjectListView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter, reorderDisabled }) {
+function ListHead({ sortMode }) {
+  const arrow = { newest: " ↓", oldest: " ↑", "prio-desc": " ↓", "prio-asc": " ↑" }[sortMode] || "";
+  const byDate = sortMode === "newest" || sortMode === "oldest";
+  const byPrio = sortMode === "prio-desc" || sortMode === "prio-asc";
+  return (
+    <div className="row list-head" aria-hidden="true">
+      <span className="handle"><DragHandleIcon /></span>
+      <div className="rowmain">
+        <span>Project</span>
+        <span>Status</span>
+        <span>Type</span>
+        <span data-sorted={byPrio}>Priority{byPrio ? arrow : ""}</span>
+        <span>Assignee</span>
+        <span data-sorted={byDate}>Created{byDate ? arrow : ""}</span>
+      </div>
+    </div>
+  );
+}
+
+function ProjectListView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter, reorderDisabled, sortMode }) {
   const dnd = useReorderable(projects, onReorder);
   if (projects.length === 0) {
     return <EmptyState filter={filter} onAdd={onAdd} onClearFilter={onClearFilter} />;
   }
   return (
     <div className="list">
+      <ListHead sortMode={sortMode} />
       {projects.map((project) => (
         <ProjectRow
           key={project.id}
@@ -1545,7 +1642,8 @@ function App() {
   async function handleGenerateIdea(ideaText, signal) {
     const drafts = await draftProjectsFromIdea({ ideaText, types, members: members.map((m) => m.name), signal });
     // Like Sync notes: add every project found straight to Ideation, with the raw text as a note.
-    const baseOrder = projects.reduce((max, p) => Math.max(max, p.order ?? 0), -1) + 1;
+    // New projects go to the top of the manual order, keeping the drafts' own order.
+    const baseOrder = projects.reduce((min, p) => Math.min(min, p.order ?? 0), 0) - drafts.length;
     const now = Date.now();
     for (let i = 0; i < drafts.length; i++) {
       const d = drafts[i];
@@ -1676,7 +1774,8 @@ function App() {
         updatedAt: Date.now(),
       });
     } else {
-      const maxOrder = projects.reduce((max, p) => Math.max(max, p.order ?? 0), -1);
+      // New projects go to the top of the manual order.
+      const minOrder = projects.reduce((min, p) => Math.min(min, p.order ?? 0), 0);
       const id = genId();
       await db.doc("projects/" + id).set({
         name: input.name,
@@ -1685,7 +1784,7 @@ function App() {
         priority: input.priority,
         assignedTo: input.assignedTo,
         status: input.status,
-        order: maxOrder + 1,
+        order: minOrder - 1,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
@@ -1844,6 +1943,7 @@ function App() {
           {view === "list" && (
             <ProjectListView
               reorderDisabled={reorderDisabled}
+              sortMode={sortMode}
               projects={visibleProjects}
               typesById={typesById}
               onSelectProject={openEditForm}
