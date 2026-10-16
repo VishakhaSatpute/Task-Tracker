@@ -2,8 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { createStore } from "./store.js";
 import { draftProjectsFromIdea, copyForClaudeError } from "./claude.js";
 import {
-  folderApiSupported, pickFolder, getSavedFolder, folderPermission,
-  syncNotes, lastScheduledTime, nextScheduledTime,
+  folderApiSupported, pickFolder, getSavedFolder, syncNotes,
 } from "./notesSync.js";
 import { SettingsModal } from "./SettingsModal.jsx";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings.js";
@@ -1241,7 +1240,6 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [syncSummary, setSyncSummary] = useState(null);
   const [syncError, setSyncError] = useState("");
-  const [needsFolderClick, setNeedsFolderClick] = useState(false);
   const syncingRef = useRef(false);
   const rawProjects = useCollection(db, "projects");
   const rawTypes = useCollection(db, "types");
@@ -1328,19 +1326,13 @@ function App() {
     return () => { cancelled = true; };
   }, [db]);
 
-  const runSync = useCallback(async (handleOverride, { auto, force } = {}) => {
+  const runSync = useCallback(async (handleOverride, { force } = {}) => {
     const handle = handleOverride || folderHandle;
     if (!db || !handle || syncingRef.current) return;
-    if (auto) {
-      // Automatic runs can't prompt: needs a click if permission lapsed.
-      const perm = await folderPermission(handle);
-      if (perm !== "granted") { setNeedsFolderClick(true); return; }
-    }
     if (!settings.hasApiKey) { setSyncError("Add an API key for the selected AI provider in Settings to sync notes."); return; }
     syncingRef.current = true;
     setSyncing(true);
     setSyncError("");
-    setNeedsFolderClick(false);
     let leased = false;
     try {
       // Server-side lease: only one tab/window syncs at a time.
@@ -1381,12 +1373,9 @@ function App() {
     }
   }, [db, folderHandle, settings]);
 
-  const runSyncRef = useRef(runSync);
-  useEffect(() => { runSyncRef.current = runSync; }, [runSync]);
-
   async function handleSyncNow() {
     if (!folderHandle) { setSettingsOpen(true); return; }
-    await runSync(undefined, { auto: false });
+    await runSync();
   }
 
   async function handlePickFolder() {
@@ -1395,31 +1384,11 @@ function App() {
       if (h) {
         setFolderHandle(h);
         setSyncError("");
-        setNeedsFolderClick(false);
       }
     } catch (err) {
       setSyncError((err && err.message) || "Could not open the folder.");
     }
   }
-
-  // Daily schedule: catch up on load if a scheduled time was missed, then
-  // arm a timer for the next occurrence while the tab stays open.
-  const settingsRef = useRef(settings);
-  useEffect(() => { settingsRef.current = settings; }, [settings]);
-
-  useEffect(() => {
-    if (!db || !folderHandle || !settingsLoaded || !settings.dailyEnabled) return;
-    let timer;
-    function arm() {
-      const now = Date.now();
-      const due = lastScheduledTime(now, settingsRef.current.dailyTime);
-      if ((settingsRef.current.lastSyncAt || 0) < due) runSyncRef.current(undefined, { auto: true });
-      const delay = Math.max(1000, nextScheduledTime(now, settingsRef.current.dailyTime) - now);
-      timer = setTimeout(arm, Math.min(delay, 2147483000));
-    }
-    arm();
-    return () => clearTimeout(timer);
-  }, [db, folderHandle, settingsLoaded, settings.dailyEnabled, settings.dailyTime]);
 
   async function handleSaveSettings(patch) {
     const next = await saveSettings(patch);
@@ -1429,7 +1398,6 @@ function App() {
   let syncStatus = "";
   if (syncing) syncStatus = "Syncing notes…";
   else if (syncError) syncStatus = syncError;
-  else if (needsFolderClick) syncStatus = "Click “Sync notes now” to re-allow access to the notes folder.";
   else if (syncSummary) {
     const s = syncSummary;
     syncStatus = "Last sync " + new Date(s.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) +

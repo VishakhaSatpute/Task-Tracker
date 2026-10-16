@@ -8,7 +8,7 @@ Drop meeting transcripts or notes into a folder, or paste text into **Describe a
 
 - **Project board** with four statuses: Ideation, In Progress, Completed and Dead. View it as a list, tiles or phases.
 - **Describe an idea:** paste an idea, notes or a transcript. If it covers several projects, one card is created for each.
-- **Notes folder sync:** point the app at a folder of `.txt` files. It scans them for projects, and re-processes a file only when it changes. Sync on demand or on a daily schedule.
+- **Notes folder sync:** point the app at a folder of `.txt` files. It scans them for projects, and re-processes a file only when it changes. Sync on demand.
 - **Cards** have a name, description, type, priority, assignee and status, plus notes.
 - **Custom project types and team members**, managed from the header.
 - **Local storage:** data lives in a single SQLite file, and API keys stay on the server and are never sent to the browser.
@@ -70,7 +70,7 @@ Click **Add project**, fill in the details and save. New projects start in Ideat
 
 ### Sync a notes folder
 1. Open **Settings** and choose your notes folder. The repo includes `sample-notes/` to try it out.
-2. Click **Sync notes now**, or enable the daily sync and set a time.
+2. Click **Sync notes now**.
 3. New projects appear in Ideation, each with its source text as a note.
 
 Each `.txt` file is processed once. If you edit a file, its projects are updated. Their status and assignee stay as your team set them. A file can produce several projects.

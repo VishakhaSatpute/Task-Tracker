@@ -7,8 +7,6 @@ export function SettingsModal({ settings, folderName, folderSupported, onPickFol
   const [openaiModel, setOpenaiModel] = useState(settings.openaiModel || "");
   const [clearKey, setClearKey] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [dailyEnabled, setDailyEnabled] = useState(settings.dailyEnabled);
-  const [dailyTime, setDailyTime] = useState(settings.dailyTime || "09:00");
 
   useEffect(() => {
     function handleKeyDown(e) {
@@ -22,7 +20,7 @@ export function SettingsModal({ settings, folderName, folderSupported, onPickFol
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const patch = { dailyEnabled, dailyTime, provider, anthropicModel, openaiModel };
+    const patch = { provider, anthropicModel, openaiModel };
     const keyField = provider === "openai" ? "openaiApiKey" : "apiKey";
     if (apiKey.trim()) patch[keyField] = apiKey.trim(); // blank keeps the saved key
     else if (clearKey) patch.clearKey = provider;
@@ -102,26 +100,6 @@ export function SettingsModal({ settings, folderName, folderSupported, onPickFol
               spellCheck={false}
             />
             <p className="hint">Leave blank to use the default.</p>
-          </div>
-
-          <div>
-            <span className="lbl">Daily sync</span>
-            <div className="tm-add" style={{ marginTop: 0, alignItems: "center" }}>
-              <label style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
-                <input type="checkbox" checked={dailyEnabled} onChange={(e) => setDailyEnabled(e.target.checked)} />
-                Sync every day at
-              </label>
-              <input
-                type="time"
-                className="field"
-                style={{ width: 130 }}
-                value={dailyTime}
-                onChange={(e) => setDailyTime(e.target.value)}
-                disabled={!dailyEnabled}
-                aria-label="Daily sync time"
-              />
-            </div>
-            <p className="hint">Runs while this tab is open. If the tab was closed at the scheduled time, it catches up the next time you open the app.</p>
           </div>
 
           {saveError && <p className="err">{saveError}</p>}

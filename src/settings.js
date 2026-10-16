@@ -8,8 +8,6 @@ export const DEFAULT_SETTINGS = {
   hasOpenaiKey: false,
   anthropicModel: "claude-sonnet-5-5",
   openaiModel: "gpt-4o-mini",
-  dailyEnabled: true,
-  dailyTime: "09:00",
   lastSyncAt: 0,
 };
 
@@ -20,7 +18,7 @@ export async function loadSettings() {
 }
 
 // `patch` may include provider, apiKey (Anthropic), openaiApiKey, clearKey,
-// anthropicModel, openaiModel, dailyEnabled, dailyTime, lastSyncAt.
+// anthropicModel, openaiModel, lastSyncAt.
 export async function saveSettings(patch) {
   const res = await fetch("/api/settings", {
     method: "PUT",

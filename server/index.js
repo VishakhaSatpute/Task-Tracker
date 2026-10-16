@@ -8,7 +8,7 @@ const OPENAI_MODEL = "gpt-4o-mini";
 // Overridable so tests can point at a local stub instead of the real APIs.
 const ANTHROPIC_BASE = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
 const OPENAI_BASE = process.env.OPENAI_BASE_URL || "https://api.openai.com";
-const DEFAULTS = { provider: "anthropic", dailyEnabled: true, dailyTime: "09:00", lastSyncAt: 0 };
+const DEFAULTS = { provider: "anthropic", lastSyncAt: 0 };
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -65,8 +65,6 @@ function publicSettings() {
     hasApiKey: provider === "openai" ? hasOpenaiKey : hasAnthropicKey,
     anthropicModel: s.anthropicModel || ANTHROPIC_MODEL,
     openaiModel: s.openaiModel || OPENAI_MODEL,
-    dailyEnabled: Boolean(s.dailyEnabled),
-    dailyTime: s.dailyTime,
     lastSyncAt: s.lastSyncAt,
   };
 }
@@ -96,8 +94,6 @@ app.put("/api/settings", (req, res) => {
     if (b.openaiModel.trim() && !modelOk(b.openaiModel)) return res.status(400).json({ error: "bad model name" });
     store.setSetting("openaiModel", b.openaiModel.trim());
   }
-  if (typeof b.dailyEnabled === "boolean") store.setSetting("dailyEnabled", b.dailyEnabled);
-  if (typeof b.dailyTime === "string" && /^\d{2}:\d{2}$/.test(b.dailyTime)) store.setSetting("dailyTime", b.dailyTime);
   if (typeof b.lastSyncAt === "number") store.setSetting("lastSyncAt", b.lastSyncAt);
   res.json(publicSettings());
 });
