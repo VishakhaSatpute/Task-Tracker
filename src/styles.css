@@ -69,6 +69,60 @@
   }
   .btn-outline:hover:not(:disabled) { background: var(--well); }
   .btn-outline:disabled { opacity: 0.5; }
+  /* ---------- sort & filter bar ---------- */
+  .filterbar { margin-bottom: 18px; padding: 10px 12px; background: var(--well); border-radius: 12px; }
+  .fb-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
+  .fb-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .fb-cap { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+  .fb-ctl {
+    position: relative; display: inline-flex; align-items: center; color: var(--ink-2);
+    background: var(--surface); border: 1px solid var(--field-line); border-radius: 10px; transition: background 0.15s, border-color 0.15s;
+  }
+  .fb-ctl:hover { background: #FAFAFC; }
+  .fb-ctl:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .fb-ctl svg { position: absolute; left: 10px; pointer-events: none; }
+  .fb-ctl select {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent; cursor: pointer; min-width: 170px; max-width: 240px;
+    padding: 8px 32px 8px 32px; font-size: 14px; font-weight: 600; color: var(--ink); border-radius: 10px; outline: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23666' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+  }
+  .fb-field.ms { position: relative; }
+  .ms-trigger {
+    min-width: 170px; max-width: 240px; padding: 8px 32px 8px 32px; text-align: left; font-size: 14px; font-weight: 600; color: var(--ink);
+    border-radius: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23666' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+  }
+  .ms-trigger:focus-visible { outline: none; }
+  .fb-field[data-active="true"] .ms-trigger { color: var(--primary); }
+  .ms-pop {
+    position: absolute; top: 100%; left: 0; z-index: 20; margin-top: 6px; min-width: 240px; max-height: 320px; overflow: auto;
+    background: var(--surface); border: 1px solid var(--field-line); border-radius: 12px; box-shadow: var(--modal-shadow); padding: 6px;
+  }
+  .ms-opt { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .ms-opt:hover { background: var(--well); }
+  .ms-opt input { width: 16px; height: 16px; accent-color: var(--primary); }
+  .ms-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ms-foot { display: flex; justify-content: space-between; margin-top: 4px; padding: 8px 8px 4px; border-top: 1px solid var(--line); }
+  .ms-foot .link:disabled { opacity: 0.4; text-decoration: none; }
+  .fb-field[data-active="true"] .fb-ctl { background: var(--sel); border-color: var(--primary); color: var(--primary); }
+  .fb-field[data-active="true"] .fb-cap { color: var(--primary); }
+  .fb-hint { align-self: center; padding-top: 16px; font-size: 13px; color: var(--ink-2); }
+  .fb-count { margin-left: auto; align-self: center; padding-top: 16px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .fb-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px;
+    background: var(--surface); box-shadow: 0 0 0 1px var(--field-line); font-size: 13px;
+  }
+  .chip button { width: 18px; height: 18px; border-radius: 50%; line-height: 1; font-size: 15px; color: var(--ink-2); }
+  .chip button:hover { background: var(--well); color: var(--ink); }
+  @media (max-width: 640px) {
+    .fb-field { flex: 1 1 100%; }
+    .fb-ctl, .fb-ctl select, .ms-trigger { width: 100%; max-width: none; }
+    .ms-pop { right: 0; }
+    .fb-count, .fb-hint { margin-left: 0; padding-top: 0; flex: 1 1 100%; }
+  }
   .modal.small { max-width: 400px; }
   .btn-quiet { padding: 9px 14px; border-radius: 10px; font-size: 14px; font-weight: 400; color: var(--ink-2); transition: background 0.15s; }
   .btn-quiet:hover { background: var(--well); color: var(--ink); }
@@ -115,6 +169,8 @@
   .handle { flex: none; padding: 8px 6px; border-radius: 6px; color: var(--ink-2); opacity: 0.55; cursor: grab; touch-action: none; }
   .handle:hover, .handle:focus-visible { opacity: 1; }
   .handle:active { cursor: grabbing; }
+  .handle:disabled { opacity: 0.2; cursor: not-allowed; }
+  .m-date { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ---------- list view ---------- */
   .list { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
@@ -126,7 +182,7 @@
   .row.is-over { outline: 2px solid var(--focus); outline-offset: -2px; }
   .rowmain {
     flex: 1; min-width: 0; display: grid; align-items: center; gap: 0 14px; padding: 14px 0; cursor: pointer;
-    grid-template-columns: minmax(0, 1fr) 112px 96px 84px 150px;
+    grid-template-columns: minmax(0, 1fr) 112px 96px 84px 150px 120px;
   }
   .rowmain .name, .rowmain .desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rowmain .meta { display: contents; }
@@ -253,6 +309,10 @@
   .note-author { font-size: 12.5px; font-weight: 700; }
   .note-time { font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
   .note-text { font-size: 13.5px; white-space: pre-wrap; word-break: break-word; }
+  .note-actions { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+  .note-confirm { font-size: 12.5px; color: var(--ink-2); }
+  .note-edit { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .note-edit .note-input { width: 100%; }
   .note-compose { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
   .note-author-input { font-size: 13px; padding: 6px 10px; }
   .note-compose-row { display: flex; gap: 8px; align-items: flex-end; }

@@ -121,6 +121,7 @@ function Meta({ project, typeLabel, showStatus }) {
         {cap(project.priority)}
       </span>
       <Assignee name={project.assignedTo} />
+      <span className="m-date" title="Created">{project.createdAt ? formatNoteTime(project.createdAt) : "—"}</span>
     </div>
   );
 }
@@ -218,6 +219,134 @@ function ViewSwitcher({ value, onChange }) {
           {opt.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+const SORT_OPTIONS = [
+  { value: "manual", label: "Manual order" },
+  { value: "newest", label: "Date: newest first" },
+  { value: "oldest", label: "Date: oldest first" },
+  { value: "prio-desc", label: "Priority: high to low" },
+  { value: "prio-asc", label: "Priority: low to high" },
+];
+const PRIORITY_RANK = { high: 3, medium: 2, low: 1 };
+const UNASSIGNED_FILTER = "__unassigned__";
+
+function MemberMultiSelect({ members, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDown(e) {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    }
+    function onKey(e) {
+      if (e.key === "Escape") { setOpen(false); triggerRef.current?.focus(); }
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const options = [{ key: UNASSIGNED_FILTER, label: "Unassigned", name: "" }, ...members.map((m) => ({ key: m.name, label: m.name, name: m.name }))];
+  const first = value[0] === UNASSIGNED_FILTER ? "Unassigned" : value[0];
+  const summary = value.length === 0 ? "All members" : value.length === 1 ? first : first + " +" + (value.length - 1);
+
+  function toggle(key) {
+    onChange(value.includes(key) ? value.filter((v) => v !== key) : [...value, key]);
+  }
+
+  return (
+    <div className="fb-field ms" data-active={value.length > 0} ref={rootRef}>
+      <span className="fb-cap">Member</span>
+      <span className="fb-ctl">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+          <circle cx="7" cy="4.8" r="2.4" /><path d="M2.5 12c.5-2.4 2.3-3.6 4.5-3.6s4 1.2 4.5 3.6" />
+        </svg>
+        <button type="button" ref={triggerRef} className="ms-trigger" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          {summary}
+        </button>
+      </span>
+      {open && (
+        <div className="ms-pop" role="group" aria-label="Filter by members">
+          {options.map((o) => (
+            <label className="ms-opt" key={o.key}>
+              <input type="checkbox" checked={value.includes(o.key)} onChange={() => toggle(o.key)} />
+              {o.name ? <span className="avatar" aria-hidden="true">{initials(o.name)}</span> : <span className="avatar none" aria-hidden="true" />}
+              <span className="ms-name">{o.label}</span>
+            </label>
+          ))}
+          <div className="ms-foot">
+            <button type="button" className="link" onClick={() => onChange([])} disabled={value.length === 0}>Clear</button>
+            <button type="button" className="link" onClick={() => setOpen(false)}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FilterBar({
+  view, sortMode, onSortChange, members, memberFilter, onMemberFilterChange,
+  statusFilter, onStatusClear, onClearAll, visibleCount, totalCount,
+}) {
+  const showSort = view !== "phases";
+  const sortActive = showSort && sortMode !== "manual";
+  const memberActive = memberFilter.length > 0;
+  const statusActive = statusFilter !== "all" && view !== "phases";
+  const memberLabel = (v) => (v === UNASSIGNED_FILTER ? "Unassigned" : v);
+  const anyFilter = memberActive || statusActive;
+  const count = view === "phases" ? (memberActive ? "filtered" : "all") : null;
+
+  return (
+    <div className="filterbar" role="group" aria-label="Sort and filter projects">
+      <div className="fb-row">
+        <MemberMultiSelect members={members} value={memberFilter} onChange={onMemberFilterChange} />
+
+        {showSort && (
+          <label className="fb-field" data-active={sortActive}>
+            <span className="fb-cap">Sort by</span>
+            <span className="fb-ctl">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 2v10M1.8 9.8 4 12l2.2-2.2M10 12V2M7.8 4.2 10 2l2.2 2.2" />
+              </svg>
+              <select value={sortMode} onChange={(e) => onSortChange(e.target.value)}>
+                {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </span>
+          </label>
+        )}
+
+        {sortActive && <p className="fb-hint">Drag-reorder is off while sorted.</p>}
+
+        <p className="fb-count" aria-live="polite">
+          {count === null ? visibleCount + " of " + totalCount + " projects" : totalCount + " projects"}
+        </p>
+      </div>
+
+      {anyFilter && (
+        <div className="fb-chips">
+          {memberFilter.map((v) => (
+            <span className="chip" key={v}>
+              Member: {memberLabel(v)}
+              <button type="button" onClick={() => onMemberFilterChange(memberFilter.filter((x) => x !== v))} aria-label={"Remove member filter " + memberLabel(v)}>×</button>
+            </span>
+          ))}
+          {statusActive && (
+            <span className="chip">
+              Status: {STATUS_LABELS[statusFilter] || statusFilter}
+              <button type="button" onClick={onStatusClear} aria-label="Remove status filter">×</button>
+            </span>
+          )}
+          <button type="button" className="link" onClick={onClearAll}>Clear all</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -648,7 +777,7 @@ function IdeaCapture({ onGenerate, onClose }) {
 
 // ---------- ProjectForm (modal) ----------
 
-function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete, onManageMembers, onManageTypes, notes, notesLoading, onAddNote }) {
+function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete, onManageMembers, onManageTypes, notes, notesLoading, onAddNote, onEditNote, onDeleteNote }) {
   const isEditing = Boolean(project);
   const [name, setName] = useState(project?.name ?? draft?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? draft?.description ?? "");
@@ -807,6 +936,8 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
               loading={notesLoading}
               members={members}
               onAddNote={onAddNote}
+              onEditNote={onEditNote}
+              onDeleteNote={onDeleteNote}
             />
           )}
         </div>
@@ -823,7 +954,13 @@ function formatNoteTime(ts) {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " · " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-function NotesPanel({ projectId, notes, loading, members, onAddNote }) {
+function NotesPanel({ projectId, notes, loading, members, onAddNote, onEditNote, onDeleteNote }) {
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [confirmId, setConfirmId] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [noteError, setNoteError] = useState("");
+
   const [author, setAuthor] = useState(() => {
     try {
       // "warboard-note-author" is the pre-rename key; fall back to it once.
@@ -855,6 +992,37 @@ function NotesPanel({ projectId, notes, loading, members, onAddNote }) {
     setSending(false);
   }
 
+  function startEdit(n) { setEditingId(n.id); setEditText(n.text || ""); setConfirmId(null); setNoteError(""); }
+  function cancelEdit() { setEditingId(null); setEditText(""); setNoteError(""); }
+
+  async function saveEdit(n) {
+    const trimmed = editText.trim();
+    if (!trimmed || busyId) return;
+    if (trimmed === (n.text || "").trim()) { cancelEdit(); return; }
+    setBusyId(n.id);
+    setNoteError("");
+    try {
+      await onEditNote(projectId, n.id, trimmed);
+      cancelEdit();
+    } catch (err) {
+      setNoteError("Could not save the change. Please try again.");
+    }
+    setBusyId(null);
+  }
+
+  async function removeNote(n) {
+    if (busyId) return;
+    setBusyId(n.id);
+    setNoteError("");
+    try {
+      await onDeleteNote(projectId, n.id);
+      setConfirmId(null);
+    } catch (err) {
+      setNoteError("Could not delete the note. Please try again.");
+    }
+    setBusyId(null);
+  }
+
   return (
     <div className="notes-col">
       <h3 className="notes-title">Notes &amp; updates</h3>
@@ -868,12 +1036,50 @@ function NotesPanel({ projectId, notes, loading, members, onAddNote }) {
           <div key={n.id} className="note-msg">
             <div className="note-msg-head">
               <span className="note-author">{n.author || "Someone"}</span>
-              <span className="note-time">{formatNoteTime(n.createdAt)}</span>
+              <span className="note-time">{formatNoteTime(n.createdAt)}{n.editedAt ? " · edited" : ""}</span>
             </div>
-            <p className="note-text">{n.text}</p>
+            {editingId === n.id ? (
+              <div className="note-edit">
+                <textarea
+                  className="field note-input"
+                  value={editText}
+                  rows={3}
+                  autoFocus
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") { e.stopPropagation(); cancelEdit(); }
+                    else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveEdit(n); }
+                  }}
+                  aria-label="Edit note"
+                />
+                <div className="note-actions">
+                  <button type="button" className="btn-primary note-send" disabled={busyId === n.id || !editText.trim()} onClick={() => saveEdit(n)}>Save</button>
+                  <button type="button" className="btn-quiet" onClick={cancelEdit}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <p className="note-text">{n.text}</p>
+                <div className="note-actions">
+                  {confirmId === n.id ? (
+                    <>
+                      <span className="note-confirm">Delete this note?</span>
+                      <button type="button" className="link small danger" disabled={busyId === n.id} onClick={() => removeNote(n)}>Yes, delete</button>
+                      <button type="button" className="link small" onClick={() => setConfirmId(null)}>No</button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className="link small" onClick={() => startEdit(n)}>Edit</button>
+                      <button type="button" className="link small danger" onClick={() => { setConfirmId(n.id); setNoteError(""); }}>Delete</button>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         ))}
       </div>
+      {noteError && <p className="err">{noteError}</p>}
 
       <form onSubmit={handleSend} className="note-compose">
         <input
@@ -969,9 +1175,9 @@ function EmptyState({ filter, onAdd, onClearFilter }) {
   const filtered = filter && filter !== "all";
   return (
     <div className="empty">
-      <p>{filtered ? "No projects with this status." : "No projects yet."}</p>
+      <p>{filtered ? "No projects match these filters." : "No projects yet."}</p>
       {filtered ? (
-        <button type="button" className="link" onClick={onClearFilter}>Show all projects</button>
+        <button type="button" className="link" onClick={onClearFilter}>Clear filters</button>
       ) : (
         <button type="button" className="link" onClick={onAdd}>Add project</button>
       )}
@@ -981,17 +1187,19 @@ function EmptyState({ filter, onAdd, onClearFilter }) {
 
 // ---------- ProjectRow (List view) ----------
 
-function ProjectRow({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReorder }) {
+function ProjectRow({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReorder, reorderDisabled }) {
   return (
     <div
-      onDragOver={dnd.handleDragOver(project.id)}
-      onDrop={dnd.handleDrop(project.id)}
+      onDragOver={reorderDisabled ? undefined : dnd.handleDragOver(project.id)}
+      onDrop={reorderDisabled ? undefined : dnd.handleDrop(project.id)}
       className={"row" + (isDraggingOver ? " is-over" : "")}
       style={{ "--status": statusVar(project.status) }}
     >
       <button
         type="button"
-        draggable
+        draggable={!reorderDisabled}
+        disabled={reorderDisabled}
+        title={reorderDisabled ? "Switch sort to Manual to reorder" : undefined}
         onDragStart={dnd.handleDragStart(project.id)}
         onDragEnd={dnd.handleDragEnd}
         onKeyDown={(e) => {
@@ -1021,7 +1229,7 @@ function ProjectRow({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReo
   );
 }
 
-function ProjectListView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter }) {
+function ProjectListView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter, reorderDisabled }) {
   const dnd = useReorderable(projects, onReorder);
   if (projects.length === 0) {
     return <EmptyState filter={filter} onAdd={onAdd} onClearFilter={onClearFilter} />;
@@ -1037,6 +1245,7 @@ function ProjectListView({ projects, typesById, onSelectProject, onReorder, filt
           dnd={dnd}
           isDraggingOver={dnd.overId === project.id}
           onKeyReorder={dnd.moveByKeyboard}
+          reorderDisabled={reorderDisabled}
         />
       ))}
     </div>
@@ -1045,18 +1254,20 @@ function ProjectListView({ projects, typesById, onSelectProject, onReorder, filt
 
 // ---------- ProjectCard (Tiles + Phases) ----------
 
-function ProjectCard({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReorder, showStatus }) {
+function ProjectCard({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyReorder, showStatus, reorderDisabled }) {
   return (
     <div
-      onDragOver={dnd.handleDragOver(project.id)}
-      onDrop={dnd.handleDrop(project.id)}
+      onDragOver={reorderDisabled ? undefined : dnd.handleDragOver(project.id)}
+      onDrop={reorderDisabled ? undefined : dnd.handleDrop(project.id)}
       className={"card" + (isDraggingOver ? " is-over" : "")}
       data-plain={showStatus ? "false" : "true"}
       style={{ "--status": statusVar(project.status) }}
     >
       <button
         type="button"
-        draggable
+        draggable={!reorderDisabled}
+        disabled={reorderDisabled}
+        title={reorderDisabled ? "Switch sort to Manual to reorder" : undefined}
         onDragStart={dnd.handleDragStart(project.id)}
         onDragEnd={dnd.handleDragEnd}
         onKeyDown={(e) => {
@@ -1084,7 +1295,7 @@ function ProjectCard({ project, typeLabel, onClick, dnd, isDraggingOver, onKeyRe
   );
 }
 
-function ProjectTilesView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter }) {
+function ProjectTilesView({ projects, typesById, onSelectProject, onReorder, filter, onAdd, onClearFilter, reorderDisabled }) {
   const dnd = useReorderable(projects, onReorder);
   if (projects.length === 0) {
     return <EmptyState filter={filter} onAdd={onAdd} onClearFilter={onClearFilter} />;
@@ -1101,6 +1312,7 @@ function ProjectTilesView({ projects, typesById, onSelectProject, onReorder, fil
           isDraggingOver={dnd.overId === project.id}
           onKeyReorder={dnd.moveByKeyboard}
           showStatus={true}
+          reorderDisabled={reorderDisabled}
         />
       ))}
     </div>
@@ -1250,6 +1462,19 @@ function App() {
   const [draftProject, setDraftProject] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [view, setView] = useState("list");
+  const [memberFilter, setMemberFilter] = useState([]);
+  const [sortMode, setSortModeState] = useState(() => {
+    try {
+      const saved = localStorage.getItem("task-tracker-sort-mode");
+      return SORT_OPTIONS.some((o) => o.value === saved) ? saved : "manual";
+    } catch (e) {
+      return "manual";
+    }
+  });
+  function setSortMode(mode) {
+    setSortModeState(mode);
+    try { localStorage.setItem("task-tracker-sort-mode", mode); } catch (e) {}
+  }
   const [manageModal, setManageModal] = useState(null); // null | "members" | "types"
   const [ideaCaptureOpen, setIdeaCaptureOpen] = useState(false);
 
@@ -1278,14 +1503,39 @@ function App() {
     () => [...projects].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
     [projects]
   );
-  const visibleProjects = statusFilter === "all" ? sortedProjects : sortedProjects.filter((p) => p.status === statusFilter);
-
-  const isTypeInUse = useCallback((id) => projects.some((p) => p.typeId === id), [projects]);
-
   const members = useMemo(
     () => [...(rawMembers ?? [])].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
     [rawMembers]
   );
+  // Selected members that no longer exist are dropped; empty selection means "all".
+  const activeMemberFilter = useMemo(
+    () => memberFilter.filter((v) => v === UNASSIGNED_FILTER || members.some((m) => m.name === v)),
+    [memberFilter, members]
+  );
+  const memberProjects = useMemo(() => {
+    if (activeMemberFilter.length === 0) return sortedProjects;
+    const selected = new Set(activeMemberFilter);
+    return sortedProjects.filter((p) => (p.assignedTo ? selected.has(p.assignedTo) : selected.has(UNASSIGNED_FILTER)));
+  }, [sortedProjects, activeMemberFilter]);
+  const filteredProjects = statusFilter === "all" ? memberProjects : memberProjects.filter((p) => p.status === statusFilter);
+  const visibleProjects = useMemo(() => {
+    if (sortMode === "manual") return filteredProjects;
+    const created = (p) => p.createdAt ?? 0;
+    const prio = (p) => PRIORITY_RANK[p.priority] ?? 1;
+    // Array.sort is stable, so remaining ties keep their manual order.
+    return [...filteredProjects].sort((a, b) => {
+      if (sortMode === "newest") return created(b) - created(a);
+      if (sortMode === "oldest") return created(a) - created(b);
+      const d = sortMode === "prio-desc" ? prio(b) - prio(a) : prio(a) - prio(b);
+      return d || created(b) - created(a);
+    });
+  }, [filteredProjects, sortMode]);
+  const reorderDisabled = sortMode !== "manual";
+  const hasActiveFilter = statusFilter !== "all" || activeMemberFilter.length > 0;
+  function clearFilters() { setStatusFilter("all"); setMemberFilter([]); }
+
+  const isTypeInUse = useCallback((id) => projects.some((p) => p.typeId === id), [projects]);
+
   const isMemberInUse = useCallback((name) => projects.some((p) => p.assignedTo === name), [projects]);
 
   function openAddForm() { setEditingProject(undefined); setDraftProject(null); setIsFormOpen(true); }
@@ -1457,6 +1707,16 @@ function App() {
     });
   }
 
+  async function handleEditNote(projectId, noteId, text) {
+    if (!db) throw new Error("db unavailable");
+    await db.doc("projects/" + projectId + "/notes/" + noteId).update({ text, editedAt: Date.now() });
+  }
+
+  async function handleDeleteNote(projectId, noteId) {
+    if (!db) throw new Error("db unavailable");
+    await db.doc("projects/" + projectId + "/notes/" + noteId).delete();
+  }
+
   async function handleAddType(label) {
     if (!db) return;
     const id = genId();
@@ -1561,37 +1821,53 @@ function App() {
       {showContent && (
         <React.Fragment>
           <PipelineStrip
-            projects={sortedProjects}
+            projects={memberProjects}
             value={statusFilter}
             onChange={setStatusFilter}
             interactive={view !== "phases"}
           />
 
+          <FilterBar
+            view={view}
+            sortMode={sortMode}
+            onSortChange={setSortMode}
+            members={members}
+            memberFilter={activeMemberFilter}
+            onMemberFilterChange={setMemberFilter}
+            statusFilter={statusFilter}
+            onStatusClear={() => setStatusFilter("all")}
+            onClearAll={clearFilters}
+            visibleCount={visibleProjects.length}
+            totalCount={projects.length}
+          />
+
           {view === "list" && (
             <ProjectListView
+              reorderDisabled={reorderDisabled}
               projects={visibleProjects}
               typesById={typesById}
               onSelectProject={openEditForm}
               onReorder={handleReorder}
-              filter={statusFilter}
+              filter={hasActiveFilter ? "active" : "all"}
               onAdd={openAddForm}
-              onClearFilter={() => setStatusFilter("all")}
+              onClearFilter={clearFilters}
             />
           )}
           {view === "tiles" && (
             <ProjectTilesView
+              reorderDisabled={reorderDisabled}
               projects={visibleProjects}
               typesById={typesById}
               onSelectProject={openEditForm}
               onReorder={handleReorder}
-              filter={statusFilter}
+              filter={hasActiveFilter ? "active" : "all"}
               onAdd={openAddForm}
-              onClearFilter={() => setStatusFilter("all")}
+              onClearFilter={clearFilters}
             />
           )}
           {view === "phases" && (
             <ProjectPhasesView
-              projects={sortedProjects}
+              projects={memberProjects}
               typesById={typesById}
               onSelectProject={openEditForm}
               onReorderWithinStatus={handleReorderWithinStatus}
@@ -1653,6 +1929,8 @@ function App() {
           notes={notes}
           notesLoading={notesLoading}
           onAddNote={handleAddNote}
+          onEditNote={handleEditNote}
+          onDeleteNote={handleDeleteNote}
         />
       )}
     </div>
