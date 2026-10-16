@@ -85,7 +85,8 @@ export const normName = (n) =>
     .trim();
 const PRIORITY_RANK = { low: 0, medium: 1, high: 2 };
 
-function buildExtractionPrompt({ text, fileName, types, existing, chunkNote }) {
+function buildExtractionPrompt({ text, fileName, types, existing, chunkNote, members = [] }) {
+  const memberList = members.length ? members.map((m) => '- "' + m + '"').join("\n") : "";
   const typeList = types.map((t) => '- "' + t.id + '": ' + t.label).join("\n");
   const existingList = existing.length
     ? existing
@@ -119,7 +120,9 @@ function buildExtractionPrompt({ text, fileName, types, existing, chunkNote }) {
     existingList +
     "\n\n" +
     "Reply with ONLY a JSON object:\n" +
-    '{"projects":[{"name": string, "description": string, "typeId": string, "priority": "high"|"medium"|"low", "excerpt": string, "existingId": string|null}]}\n' +
+    '{"projects":[{"name": string, "description": string, "typeId": string, "priority": "high"|"medium"|"low", "excerpt": string, "existingId": string|null' +
+    (members.length ? ', "assignedTo": string' : "") +
+    "}]}\n" +
     '- "name": short, specific, 2-6 words, title case, no trailing punctuation.\n' +
     "- \"description\": 1-3 plain sentences a teammate who wasn't there could understand: what it is, who it's for or what it solves, and concrete specifics mentioned (owners, dates, constraints, decisions).\n" +
     '- "typeId": exactly one of these ids:\n' +
@@ -127,6 +130,11 @@ function buildExtractionPrompt({ text, fileName, types, existing, chunkNote }) {
     "\n" +
     '- "priority": high only if urgency or a deadline is stated, low if explicitly a nice-to-have, otherwise medium.\n' +
     '- "excerpt": the parts of the text that are about this project, copied verbatim or lightly trimmed (keep speaker labels), at most about 1500 characters.\n' +
+    (members.length
+      ? '- "assignedTo": the team member who is building, owns or leads this project, if the text names them (a first name or nickname counts, e.g. "Vishakha built X" or "X is being built by Vishakha"). Use EXACTLY one of these member names, or "" if nobody is named or the person is not in the list:\n' +
+        memberList +
+        "\n"
+      : "") +
     "No markdown fences, no other text."
   );
 }
@@ -139,9 +147,11 @@ export async function extractProjectsFromNote({
   fileName,
   types,
   existing = [],
+  members = [],
   signal,
 }) {
   const chunks = chunkText(noteText);
+  const memberByNorm = new Map(members.map((m) => [normName(m), m]));
   const typeIds = new Set(types.map((t) => t.id));
   const existingIds = new Set(existing.map((p) => p.id));
   const merged = new Map();
@@ -161,6 +171,7 @@ export async function extractProjectsFromNote({
       types,
       existing,
       chunkNote,
+      members,
     });
     const data = await completeJson(prompt, signal);
     const list = Array.isArray(data)
@@ -185,6 +196,7 @@ export async function extractProjectsFromNote({
             ? raw.excerpt.trim().slice(0, 4000)
             : "",
         existingId: existingIds.has(raw.existingId) ? raw.existingId : null,
+        assignedTo: memberByNorm.get(normName(raw.assignedTo)) || "",
       };
       const key = item.existingId
         ? "id:" + item.existingId
@@ -198,6 +210,7 @@ export async function extractProjectsFromNote({
             (prev.excerpt ? prev.excerpt + "\n\n" : "") + item.excerpt;
         if (PRIORITY_RANK[item.priority] > PRIORITY_RANK[prev.priority])
           prev.priority = item.priority;
+        if (!prev.assignedTo) prev.assignedTo = item.assignedTo;
         if (item.description.length > prev.description.length)
           prev.description = item.description;
       }
@@ -228,12 +241,13 @@ export async function draftProjectFromIdea({ ideaText, signal }) {
 // Drafts every distinct project in pasted text (an idea, notes or a transcript).
 // Falls back to the single-idea prompt when the extractor finds nothing, so short ideas still work.
 // Returns [{ name, description, typeId?, priority?, excerpt? }].
-export async function draftProjectsFromIdea({ ideaText, types, signal }) {
+export async function draftProjectsFromIdea({ ideaText, types, members = [], signal }) {
   const found = await extractProjectsFromNote({
     noteText: ideaText,
     fileName: "Pasted idea",
     types,
     existing: [],
+    members,
     signal,
   });
   if (found.length > 0) return found;

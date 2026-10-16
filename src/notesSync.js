@@ -80,6 +80,8 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
   const types = store.peekCollection("types");
   const typeChoices = types.length ? types : [{ id: "task", label: "Task" }, { id: "issue", label: "Issue" }];
 
+  const memberNames = store.peekCollection("members").map((m) => m.name).filter(Boolean);
+
   let done = 0;
   for (const entry of files) {
     done += 1;
@@ -135,7 +137,7 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
         return { id, name: p.name, description: p.description || "" };
       });
 
-      const found = await extractProjectsFromNote({ noteText: text, fileName: entry.name, types: typeChoices, existing });
+      const found = await extractProjectsFromNote({ noteText: text, fileName: entry.name, types: typeChoices, existing, members: memberNames });
       const now = Date.now();
       const resultIds = [...knownIds];
       const matched = new Set();
@@ -154,11 +156,14 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
           if (sameName) p.existingId = sameName.id;
         }
         if (p.existingId && !matched.has(p.existingId)) {
-          // Same project as before: refresh the drafted text only. Status, assignee, etc. stay as the team set them.
+          // Same project as before: refresh the drafted text only. Status, etc. stay as the team set them;
+          // an assignee is filled in only if the project has none.
           matched.add(p.existingId);
+          const current = store.peekDoc("projects/" + p.existingId);
           await store.doc("projects/" + p.existingId).update({
             name: p.name,
             description: p.description,
+            ...(p.assignedTo && !(current && current.assignedTo) ? { assignedTo: p.assignedTo } : {}),
             updatedAt: now,
           });
           await store.doc("projects/" + p.existingId + "/notes/" + genId()).set({
@@ -177,7 +182,7 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
             description: p.description,
             typeId: p.typeId,
             priority: p.priority,
-            assignedTo: "",
+            assignedTo: p.assignedTo || "",
             status: "ideation",
             order: maxOrder + 1,
             sourceFile: entry.name,

@@ -573,7 +573,7 @@ function IdeaCapture({ onGenerate, onClose }) {
     ctlRef.current = ctl;
     try {
       await onGenerate(trimmed, ctl.signal);
-      // success: the caller swaps this modal for the pre-filled project form
+      // success: the caller adds the projects to Ideation and closes this modal
     } catch (err) {
       setThinking(false);
       console.error("[Task Tracker] idea generation failed:", err);
@@ -629,7 +629,7 @@ function IdeaCapture({ onGenerate, onClose }) {
             {micNote && <p className="mic-status mic-status-note">{micNote}</p>}
           </div>
           <p style={{ fontSize: 13, color: "var(--ink-2)", marginTop: -8 }}>
-            Claude will write this up as a project name and description. Pasting notes or a transcript that covers several projects adds one card for each. They start in Ideation, unassigned.
+            Claude will analyze this and add a project (name and description) for each distinct project it finds, so notes or a transcript covering several projects add several cards. They start in Ideation, assigned to a member if you name one (add people under Manage members first), with your text saved in each project's Notes.
           </p>
           {error && <p className="err">{error}</p>}
           <div className="actions">
@@ -1295,15 +1295,8 @@ function App() {
   function closeForm() { setIsFormOpen(false); setEditingProject(undefined); setDraftProject(null); }
 
   async function handleGenerateIdea(ideaText, signal) {
-    const drafts = await draftProjectsFromIdea({ ideaText, types, signal });
-    if (drafts.length === 1) {
-      setEditingProject(undefined);
-      setDraftProject(drafts[0]);
-      setIsFormOpen(true);
-      setIdeaCaptureOpen(false);
-      return;
-    }
-    // Several projects found: add them all to Ideation.
+    const drafts = await draftProjectsFromIdea({ ideaText, types, members: members.map((m) => m.name), signal });
+    // Like Sync notes: add every project found straight to Ideation, with the raw text as a note.
     const baseOrder = projects.reduce((max, p) => Math.max(max, p.order ?? 0), -1) + 1;
     const now = Date.now();
     for (let i = 0; i < drafts.length; i++) {
@@ -1312,17 +1305,15 @@ function App() {
       await db.doc("projects/" + id).set({
         name: d.name,
         description: d.description,
-        typeId: d.typeId,
-        priority: d.priority,
-        assignedTo: "",
+        typeId: d.typeId ?? types[0]?.id,
+        priority: d.priority ?? "medium",
+        assignedTo: d.assignedTo || "",
         status: "ideation",
         order: baseOrder + i,
         createdAt: now,
         updatedAt: now,
       });
-      if (d.excerpt) {
-        await db.doc("projects/" + id + "/notes/" + genId()).set({ text: d.excerpt, author: "Describe an idea", createdAt: now });
-      }
+      await db.doc("projects/" + id + "/notes/" + genId()).set({ text: ideaText, author: "Describe an idea", createdAt: now });
     }
     setStatusFilter("all");
     setIdeaCaptureOpen(false);
