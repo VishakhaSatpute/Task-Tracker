@@ -60,6 +60,7 @@ export default function AuthGate({ children }) {
   if (state === "checking") return null;
   return (
     <main className="login">
+      <div className="login-card">
       <h1 className="login-title">Task Tracker</h1>
       <p className="login-sub">Sign in to manage your projects.</p>
       <form className="login-field" onSubmit={submit}>
@@ -77,6 +78,7 @@ export default function AuthGate({ children }) {
         </button>
       </form>
       <div className="login-error" role="alert">{error}</div>
+      </div>
     </main>
   );
 }
