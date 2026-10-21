@@ -783,13 +783,6 @@ function IdeaCapture({ onGenerate, onClose }) {
       <div className="modal" role="dialog" aria-modal="true" aria-label="Describe an idea" onClick={(e) => e.stopPropagation()}>
         <h2>Describe an idea</h2>
 
-        <div className="dictation-callout">
-          <span className="dictation-callout-icon" aria-hidden="true"><MicIcon /></span>
-          <p>
-            <strong>Want to speak it instead of typing?</strong> Use your device's own dictation &mdash; press <kbd>Fn</kbd> <kbd>Fn</kbd> on Mac or <kbd>Win</kbd> <kbd>H</kbd> on Windows &mdash; then just talk into the box below.
-          </p>
-        </div>
-
         <form onSubmit={handleSubmit} className="form">
           <div>
             <label className="lbl" htmlFor="idea-text">Talk about your idea</label>

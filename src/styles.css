@@ -276,22 +276,6 @@
   .tm + .tm { margin-top: -4px; }
 
   /* ---------- idea capture (voice-to-text) ---------- */
-  .dictation-callout {
-    display: flex; align-items: flex-start; gap: 11px; padding: 13px 15px; margin-bottom: 18px;
-    background: var(--sel); border-radius: 12px; border-left: 4px solid var(--primary);
-  }
-  .dictation-callout-icon {
-    flex: none; width: 26px; height: 26px; margin-top: 1px; border-radius: 50%;
-    background: var(--surface); color: var(--primary); display: flex; align-items: center; justify-content: center;
-    box-shadow: inset 0 0 0 1px var(--line);
-  }
-  .dictation-callout p { font-size: 13.5px; line-height: 1.45; color: var(--ink); }
-  .dictation-callout strong { font-weight: 700; }
-  .dictation-callout kbd {
-    display: inline-block; padding: 1.5px 6px; margin: 0 1px; border-radius: 5px;
-    background: var(--surface); border: 1px solid var(--field-line); box-shadow: 0 1px 0 var(--field-line);
-    font: 700 12px/1.6 Arial, Helvetica, sans-serif; color: var(--head);
-  }
   .idea-field-wrap { position: relative; }
   .field.has-mic { padding-right: 46px; }
   .mic-btn {
