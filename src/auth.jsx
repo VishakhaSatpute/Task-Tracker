@@ -74,7 +74,7 @@ export default function AuthGate({ children }) {
           onChange={(e) => setPassword(e.target.value)}
         />
         <button type="submit" disabled={busy} aria-label="Sign in">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
         </button>
       </form>
       <div className="login-error" role="alert">{error}</div>
