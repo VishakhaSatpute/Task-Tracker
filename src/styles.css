@@ -197,7 +197,8 @@
   .row.is-over { outline: 2px solid var(--focus); outline-offset: -2px; }
   .rowmain {
     flex: 1; min-width: 0; display: grid; align-items: center; gap: 0 14px; padding: 14px 0; cursor: pointer;
-    grid-template-columns: minmax(0, 1fr) 112px 96px 84px 150px 120px 110px;
+    /* Type column hidden: minmax(0, 1fr) 112px 96px 84px 150px 120px 110px */
+    grid-template-columns: minmax(0, 1fr) 112px 84px 150px 120px 110px;
   }
   .rowmain .name, .rowmain .desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rowmain .meta { display: contents; }

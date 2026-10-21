@@ -125,7 +125,7 @@ function Meta({ project, typeLabel, showStatus }) {
   return (
     <div className="meta">
       {showStatus && <StatusMark status={project.status} />}
-      <span className="m-type">{typeLabel}</span>
+      {/* <span className="m-type">{typeLabel}</span> */}
       <span className="m-prio">
         <PriorityMark level={project.priority} />
         {cap(project.priority)}
@@ -1332,7 +1332,7 @@ function ListHead({ sortMode }) {
       <div className="rowmain">
         <span>Project</span>
         <span>Status</span>
-        <span>Type</span>
+        {/* <span>Type</span> */}
         <span data-sorted={byPrio}>Priority{byPrio ? arrow : ""}</span>
         <span>Assignee</span>
         <span data-sorted={byDate}>Created{byDate ? arrow : ""}</span>
