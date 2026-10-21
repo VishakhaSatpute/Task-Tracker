@@ -131,10 +131,10 @@ function Meta({ project, typeLabel, showStatus }) {
         {cap(project.priority)}
       </span>
       <Assignee name={project.assignedTo} />
-      <span className="m-date" title="Created">{project.createdAt ? formatNoteTime(project.createdAt) : "—"}</span>
       <span className="m-due" data-overdue={overdue} title={overdue ? "Overdue" : "Due date"}>
         {due ? due.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}
       </span>
+      <span className="m-date" title="Created">{project.createdAt ? formatNoteTime(project.createdAt) : "—"}</span>
     </div>
   );
 }
@@ -1335,8 +1335,8 @@ function ListHead({ sortMode }) {
         {/* <span>Type</span> */}
         <span data-sorted={byPrio}>Priority{byPrio ? arrow : ""}</span>
         <span>Assignee</span>
-        <span data-sorted={byDate}>Created{byDate ? arrow : ""}</span>
         <span>Due</span>
+        <span data-sorted={byDate}>Created{byDate ? arrow : ""}</span>
       </div>
     </div>
   );
