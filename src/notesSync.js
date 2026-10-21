@@ -2,6 +2,7 @@
 // into a project. Dedup key: file name + lastModified, stored in "noteFiles".
 
 import { extractProjectsFromNote, copyForClaudeError, normName } from "./claude.js";
+import { getAssignees } from "./assignees.js";
 
 const HANDLE_KEY = "notesFolder";
 
@@ -163,7 +164,7 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
           await store.doc("projects/" + p.existingId).update({
             name: p.name,
             description: p.description,
-            ...(p.assignedTo && !(current && current.assignedTo) ? { assignedTo: p.assignedTo } : {}),
+            ...(p.assignedTo && getAssignees(current).length === 0 ? { assignees: [p.assignedTo], assignedTo: "" } : {}),
             updatedAt: now,
           });
           await store.doc("projects/" + p.existingId + "/notes/" + genId()).set({
@@ -183,7 +184,7 @@ export async function syncNotes({ store, handle, onProgress, force = false }) {
             description: p.description,
             typeId: p.typeId,
             priority: p.priority,
-            assignedTo: p.assignedTo || "",
+            assignees: p.assignedTo ? [p.assignedTo] : [],
             status: "ideation",
             order: minOrder - 1,
             sourceFile: entry.name,

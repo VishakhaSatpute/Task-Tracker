@@ -168,6 +168,10 @@
     flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
     background: var(--well); color: var(--ink); font-size: 11px; font-weight: 700; box-shadow: inset 0 0 0 1px var(--line);
   }
+  .avatars { display: inline-flex; flex: none; }
+  .avatars .avatar + .avatar { margin-left: -8px; box-shadow: 0 0 0 2px var(--surface); }
+  .assignee-list { display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto; }
+  .assignee-opt { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   .avatar.none { background: transparent; box-shadow: none; border: 1.5px dashed var(--ink-2); opacity: 0.7; }
   .who { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .who .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
