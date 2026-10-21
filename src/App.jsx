@@ -132,8 +132,8 @@ function Meta({ project, typeLabel, showStatus }) {
       </span>
       <Assignee name={project.assignedTo} />
       <span className="m-date" title="Created">{project.createdAt ? formatNoteTime(project.createdAt) : "—"}</span>
-      <span className={"m-due" + (due ? "" : " empty")} data-overdue={overdue} title={overdue ? "Overdue" : "Due date"}>
-        {due ? due.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
+      <span className="m-due" data-overdue={overdue} title={overdue ? "Overdue" : "Due date"}>
+        {due ? due.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}
       </span>
     </div>
   );

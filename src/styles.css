@@ -183,9 +183,9 @@
   .handle:disabled { opacity: 0.2; cursor: not-allowed; }
   .m-date { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .m-due { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-due:empty { display: none; }
   .m-due[data-overdue="true"] { color: #b3261e; font-weight: 600; }
-  .card .m-due.empty { display: none; }
-  .card .m-due:not(.empty)::before { content: "Due "; }
+  .card .m-due:not(:empty)::before { content: "Due "; }
 
   /* ---------- list view ---------- */
   .list { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
@@ -204,7 +204,6 @@
   @media (max-width: 900px) {
     .rowmain { grid-template-columns: minmax(0, 1fr); padding: 12px 0; }
     .rowmain .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }
-    .rowmain .m-due.empty { display: none; }
   }
 
   /* ---------- tiles / cards ---------- */
