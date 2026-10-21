@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import express from "express";
 import * as store from "./db.js";
 
@@ -13,36 +14,57 @@ const DEFAULTS = { provider: "anthropic", lastSyncAt: 0 };
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-// Bound to localhost only (see listen below), but also refuse cross-site browser writes.
+// Refuse cross-site browser writes: only localhost or the host serving this request may call the API.
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (origin && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-    return res.status(403).json({ error: "forbidden origin" });
+  if (origin) {
+    let host = "";
+    try { host = new URL(origin).host; } catch { /* malformed origin */ }
+    const local = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    if (!local && host !== req.headers.host) return res.status(403).json({ error: "forbidden origin" });
   }
+  next();
+});
+
+// Optional shared password. Unset (local dev) means no auth; set it for any public deploy.
+const APP_PASSWORD = process.env.APP_PASSWORD || "";
+function passwordOk(given) {
+  const a = crypto.createHash("sha256").update(String(given || "")).digest();
+  const b = crypto.createHash("sha256").update(APP_PASSWORD).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+app.post("/api/login", (req, res) => {
+  if (APP_PASSWORD && !passwordOk(req.headers["x-app-password"])) return res.status(401).json({ error: "wrong password" });
+  res.json({ ok: true, authRequired: Boolean(APP_PASSWORD) });
+});
+
+app.use("/api", (req, res, next) => {
+  if (APP_PASSWORD && !passwordOk(req.headers["x-app-password"])) return res.status(401).json({ error: "unauthorized" });
   next();
 });
 
 const validPath = (p) => typeof p === "string" && p.length > 0 && p.length < 512 && !p.startsWith("/") && !p.includes("//");
 
-app.get("/api/docs", (_req, res) => res.json(store.allDocs()));
+app.get("/api/docs", async (_req, res) => res.json(await store.allDocs()));
 
-app.post("/api/docs/set", (req, res) => {
+app.post("/api/docs/set", async (req, res) => {
   const { path, data } = req.body || {};
   if (!validPath(path) || typeof data !== "object" || data === null) return res.status(400).json({ error: "bad request" });
-  store.setDoc(path, data);
+  await store.setDoc(path, data);
   res.json({ ok: true });
 });
 
-app.post("/api/docs/update", (req, res) => {
+app.post("/api/docs/update", async (req, res) => {
   const { path, data } = req.body || {};
   if (!validPath(path) || typeof data !== "object" || data === null) return res.status(400).json({ error: "bad request" });
-  res.json({ ok: true, data: store.updateDoc(path, data) });
+  res.json({ ok: true, data: await store.updateDoc(path, data) });
 });
 
-app.post("/api/docs/delete", (req, res) => {
+app.post("/api/docs/delete", async (req, res) => {
   const { path } = req.body || {};
   if (!validPath(path)) return res.status(400).json({ error: "bad request" });
-  store.deleteDoc(path);
+  await store.deleteDoc(path);
   res.json({ ok: true });
 });
 
@@ -53,8 +75,8 @@ function activeKey(s, provider) {
     : s.apiKey || process.env.ANTHROPIC_API_KEY || "";
 }
 
-function publicSettings() {
-  const s = { ...DEFAULTS, ...store.getSettings() };
+async function publicSettings() {
+  const s = { ...DEFAULTS, ...(await store.getSettings()) };
   const provider = PROVIDERS.includes(s.provider) ? s.provider : "anthropic";
   const hasAnthropicKey = Boolean(activeKey(s, "anthropic"));
   const hasOpenaiKey = Boolean(activeKey(s, "openai"));
@@ -69,33 +91,33 @@ function publicSettings() {
   };
 }
 
-app.get("/api/settings", (_req, res) => res.json(publicSettings()));
+app.get("/api/settings", async (_req, res) => res.json(await publicSettings()));
 
 const modelOk = (m) => typeof m === "string" && /^[\w.:\-/]{1,100}$/.test(m.trim());
 
-app.put("/api/settings", (req, res) => {
+app.put("/api/settings", async (req, res) => {
   const b = req.body || {};
   if (b.provider !== undefined) {
     if (!PROVIDERS.includes(b.provider)) return res.status(400).json({ error: "unknown provider" });
-    store.setSetting("provider", b.provider);
+    await store.setSetting("provider", b.provider);
   }
   // A blank key means "unchanged"; removing a key is an explicit clearKey.
-  if (typeof b.apiKey === "string" && b.apiKey.trim()) store.setSetting("apiKey", b.apiKey.trim());
-  if (typeof b.openaiApiKey === "string" && b.openaiApiKey.trim()) store.setSetting("openaiApiKey", b.openaiApiKey.trim());
+  if (typeof b.apiKey === "string" && b.apiKey.trim()) await store.setSetting("apiKey", b.apiKey.trim());
+  if (typeof b.openaiApiKey === "string" && b.openaiApiKey.trim()) await store.setSetting("openaiApiKey", b.openaiApiKey.trim());
   if (b.clearKey !== undefined) {
     if (!PROVIDERS.includes(b.clearKey)) return res.status(400).json({ error: "unknown provider" });
-    store.setSetting(b.clearKey === "openai" ? "openaiApiKey" : "apiKey", "");
+    await store.setSetting(b.clearKey === "openai" ? "openaiApiKey" : "apiKey", "");
   }
   if (typeof b.anthropicModel === "string") {
     if (b.anthropicModel.trim() && !modelOk(b.anthropicModel)) return res.status(400).json({ error: "bad model name" });
-    store.setSetting("anthropicModel", b.anthropicModel.trim());
+    await store.setSetting("anthropicModel", b.anthropicModel.trim());
   }
   if (typeof b.openaiModel === "string") {
     if (b.openaiModel.trim() && !modelOk(b.openaiModel)) return res.status(400).json({ error: "bad model name" });
-    store.setSetting("openaiModel", b.openaiModel.trim());
+    await store.setSetting("openaiModel", b.openaiModel.trim());
   }
-  if (typeof b.lastSyncAt === "number") store.setSetting("lastSyncAt", b.lastSyncAt);
-  res.json(publicSettings());
+  if (typeof b.lastSyncAt === "number") await store.setSetting("lastSyncAt", b.lastSyncAt);
+  res.json(await publicSettings());
 });
 
 function errorCode(status) {
@@ -150,7 +172,7 @@ async function callOpenAI(prompt, apiKey, model) {
 async function handleLlm(req, res) {
   const { prompt } = req.body || {};
   if (typeof prompt !== "string" || !prompt) return res.status(400).json({ error: "bad request" });
-  const settings = store.getSettings();
+  const settings = await store.getSettings();
   const provider = PROVIDERS.includes(settings.provider) ? settings.provider : "anthropic";
   const apiKey = activeKey(settings, provider);
   const label = provider === "openai" ? "OpenAI" : "Anthropic";
@@ -169,27 +191,29 @@ app.post("/api/llm", handleLlm);
 app.post("/api/claude", handleLlm); // legacy alias
 
 // Single-writer lease for note syncs, so two tabs/windows can't process the same
-// files at once. In memory on purpose: it auto-expires and a server restart clears it.
+// files at once. Stored in the DB (serverless instances share no memory); it expires on its own.
 const LEASE_MS = 10 * 60 * 1000;
-let lease = null; // { owner, expires }
 
-app.post("/api/sync/acquire", (req, res) => {
+app.post("/api/sync/acquire", async (req, res) => {
   const owner = req.body && req.body.owner;
   if (typeof owner !== "string" || !owner || owner.length > 100) return res.status(400).json({ error: "bad request" });
-  const now = Date.now();
-  if (lease && lease.expires > now && lease.owner !== owner) {
+  if (!(await store.acquireLease(owner, LEASE_MS))) { // same owner = renew
     return res.status(409).json({ code: "sync_in_progress", error: "A sync is already running in another tab or window." });
   }
-  lease = { owner, expires: now + LEASE_MS }; // same owner = renew
   res.json({ ok: true });
 });
 
-app.post("/api/sync/release", (req, res) => {
+app.post("/api/sync/release", async (req, res) => {
   const owner = req.body && req.body.owner;
-  if (lease && lease.owner === owner) lease = null;
+  if (typeof owner === "string" && owner) await store.releaseLease(owner);
   res.json({ ok: true });
 });
 
-app.listen(PORT, "127.0.0.1", () => {
-  console.log("Task Tracker API on http://127.0.0.1:" + PORT + "  (db: " + store.dbPath + ")");
-});
+export default app;
+
+// On Vercel the app is mounted as a function (api/index.js) instead of listening.
+if (!process.env.VERCEL) {
+  app.listen(PORT, "127.0.0.1", () => {
+    console.log("Task Tracker API on http://127.0.0.1:" + PORT + "  (db: " + store.dbPath + ")");
+  });
+}

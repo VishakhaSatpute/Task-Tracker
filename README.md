@@ -11,11 +11,11 @@ Drop meeting transcripts or notes into a folder, or paste text into **Describe a
 - **Notes folder sync:** point the app at a folder of `.txt` files. It scans them for projects, and re-processes a file only when it changes. Sync on demand.
 - **Cards** have a name, description, type, priority, assignee and status, plus notes.
 - **Custom project types and team members**, managed from the header.
-- **Local storage:** data lives in a single SQLite file, and API keys stay on the server and are never sent to the browser.
+- **Local storage:** data lives in a single SQLite file (or a hosted Turso database when deployed), and API keys stay on the server and are never sent to the browser.
 
 ## Requirements
 
-- **Node.js 22 or newer.** The database uses the built-in `node:sqlite` module.
+- **Node.js 22 or newer.**
 - **Chrome or Edge** for the notes folder feature, which relies on the browser's folder access API. The rest of the app works in any modern browser.
 - **An API key** for OpenAI or Anthropic, to use the AI features.
 
@@ -94,3 +94,28 @@ data/           Created on first run. Holds your database (not committed)
 - The API server listens on `127.0.0.1` only and rejects requests from other websites.
 - Text you paste or sync is sent to your chosen AI provider to extract projects, so avoid using it on confidential notes unless your provider's terms allow it.
 - `data/` is listed in `.gitignore` so your database and API key are not committed.
+
+## Deploy to Vercel
+
+Vercel has no persistent disk, so a deployed app stores its data in [Turso](https://turso.tech) (hosted SQLite). Locally nothing changes: without the `TURSO_*` variables the app uses `data/task-tracker.db`.
+
+1. **Create a Turso database** and get its URL and an auth token:
+   ```bash
+   turso db create task-tracker
+   turso db show task-tracker --url
+   turso db tokens create task-tracker
+   ```
+2. **Copy your local data** (optional, one time):
+   ```bash
+   TURSO_DATABASE_URL=libsql://... TURSO_AUTH_TOKEN=... node scripts/migrate-to-turso.js
+   ```
+   API keys saved in Settings are not copied unless you add `--with-keys`.
+3. **Import the GitHub repo** in Vercel (framework preset: Vite) and add these environment variables:
+
+   | Variable | Purpose |
+   |---|---|
+   | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | The hosted database |
+   | `APP_PASSWORD` | Password the app asks for. **Set it**, otherwise anyone with the URL can use your data and API keys |
+   | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | AI keys (instead of entering them in Settings) |
+
+4. Deploy. The API runs as a single Vercel function (`api/index.js`) and the web app is served as static files.
