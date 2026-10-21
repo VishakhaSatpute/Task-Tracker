@@ -331,3 +331,40 @@
   .sync-status { margin-top: 10px; font-size: 13px; color: var(--ink-2); max-width: 640px; }
   .hint { margin-top: 6px; font-size: 12.5px; color: var(--ink-2); }
   .hint code { font-size: 12px; }
+
+  /* Password screen */
+  .login {
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px 16px;
+    background:
+      radial-gradient(ellipse at 50% 75%, #F6E8CF 0%, rgba(246, 232, 207, 0) 60%),
+      linear-gradient(135deg, #E6E7EE 0%, #F4F1EA 55%, #F7F0E2 100%);
+  }
+  .login-title {
+    margin: 0 0 12px;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(40px, 9vw, 60px); font-weight: 700; letter-spacing: -0.02em;
+    color: #1F1D1A; text-align: center;
+  }
+  .login-sub { margin: 0 0 36px; color: #6B675F; font-size: 18px; text-align: center; }
+  .login-field {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; max-width: 570px; padding: 10px 10px 10px 30px;
+    background: #FFFDF8; border: 1px solid #DDD8CC; border-radius: 28px;
+    box-shadow: 0 18px 40px -22px rgba(60, 50, 30, 0.35);
+  }
+  .login-field:focus-within { border-color: #B9B2A2; }
+  .login-field input {
+    flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+    font-size: 22px; color: #1F1D1A;
+  }
+  .login-field input::placeholder { color: #8A867D; }
+  .login-field button {
+    display: grid; place-items: center; flex: none;
+    width: 56px; height: 56px; border-radius: 16px;
+    background: #1F1D1A; color: #FFFFFF;
+  }
+  .login-field button:hover { background: #38342E; }
+  .login-field button:disabled { opacity: 0.6; cursor: default; }
+  .login-error { min-height: 24px; margin-top: 14px; color: var(--danger); font-size: 15px; }

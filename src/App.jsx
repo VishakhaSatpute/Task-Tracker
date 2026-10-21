@@ -5,6 +5,7 @@ import {
   folderApiSupported, pickFolder, getSavedFolder, syncNotes,
 } from "./notesSync.js";
 import { SettingsModal } from "./SettingsModal.jsx";
+import { SignOutButton } from "./auth.jsx";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings.js";
 
 const STATUSES = ["ideation", "inprogress", "completed", "dead"];
@@ -438,6 +439,7 @@ function Header({ onAddProject, onManageMembers, onManageTypes, onDescribeIdea, 
           {syncing ? "Syncing…" : "Sync notes now"}
         </button>
         <button type="button" onClick={onOpenSettings} className="btn-outline">Settings</button>
+        <SignOutButton />
         <button type="button" onClick={onManageMembers} className="btn-outline" disabled={connectionState !== "ready"}>Manage members</button>
         <button type="button" onClick={onManageTypes} className="btn-outline" disabled={connectionState !== "ready"}>Manage project types</button>
         {showIdeaButton && (

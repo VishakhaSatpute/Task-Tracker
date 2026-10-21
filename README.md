@@ -115,7 +115,7 @@ Vercel has no persistent disk, so a deployed app stores its data in [Turso](http
    | Variable | Purpose |
    |---|---|
    | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | The hosted database |
-   | `APP_PASSWORD` | Password the app asks for. **Set it**, otherwise anyone with the URL can use your data and API keys |
+   | `APP_PASSWORD` | The one password everyone uses. Visitors see a password screen first and stay signed in for 30 days. **Required on Vercel**: if it's missing, the API refuses all requests. Changing it signs everyone out (redeploy after changing) |
    | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | AI keys (instead of entering them in Settings) |
 
 4. Deploy. The API runs as a single Vercel function (`api/index.js`) and the web app is served as static files.

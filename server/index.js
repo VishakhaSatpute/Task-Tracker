@@ -26,21 +26,59 @@ app.use((req, res, next) => {
   next();
 });
 
-// Optional shared password. Unset (local dev) means no auth; set it for any public deploy.
+// One shared password for everyone, set as the APP_PASSWORD env var. Unset locally means
+// no auth; on Vercel an unset password fails closed instead of leaving the app open.
 const APP_PASSWORD = process.env.APP_PASSWORD || "";
-function passwordOk(given) {
-  const a = crypto.createHash("sha256").update(String(given || "")).digest();
-  const b = crypto.createHash("sha256").update(APP_PASSWORD).digest();
-  return crypto.timingSafeEqual(a, b);
+const SESSION_COOKIE = "tt_session";
+const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+
+const sha = (v) => crypto.createHash("sha256").update(String(v || "")).digest();
+const safeEqual = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
+// Keyed by the password, so changing APP_PASSWORD signs everyone out.
+const sign = (payload) => crypto.createHmac("sha256", APP_PASSWORD).update(payload).digest("hex");
+
+function sessionCookie(req) {
+  const m = /(?:^|;\s*)tt_session=([^;]+)/.exec(req.headers.cookie || "");
+  return m ? m[1] : "";
 }
 
-app.post("/api/login", (req, res) => {
-  if (APP_PASSWORD && !passwordOk(req.headers["x-app-password"])) return res.status(401).json({ error: "wrong password" });
-  res.json({ ok: true, authRequired: Boolean(APP_PASSWORD) });
+function hasSession(req) {
+  const [expires, mac] = sessionCookie(req).split(".");
+  return Boolean(mac) && Number(expires) > Date.now() && safeEqual(mac, sign(expires));
+}
+
+function cookieFlags(req) {
+  const secure = req.secure || req.headers["x-forwarded-proto"] === "https";
+  return "; HttpOnly; SameSite=Lax; Path=/" + (secure ? "; Secure" : "");
+}
+
+const misconfigured = Boolean(process.env.VERCEL) && !APP_PASSWORD;
+
+app.get("/api/session", (req, res) => {
+  if (misconfigured) return res.status(503).json({ error: "APP_PASSWORD is not set" });
+  res.json({ authRequired: Boolean(APP_PASSWORD), authed: !APP_PASSWORD || hasSession(req) });
+});
+
+app.post("/api/login", async (req, res) => {
+  if (misconfigured) return res.status(503).json({ error: "APP_PASSWORD is not set" });
+  if (!APP_PASSWORD) return res.json({ ok: true });
+  if (!safeEqual(req.body && req.body.password, APP_PASSWORD)) {
+    await new Promise((r) => setTimeout(r, 600)); // slow down guessing
+    return res.status(401).json({ error: "wrong password" });
+  }
+  const expires = String(Date.now() + SESSION_MS);
+  res.setHeader("Set-Cookie", SESSION_COOKIE + "=" + expires + "." + sign(expires) + cookieFlags(req) + "; Max-Age=" + SESSION_MS / 1000);
+  res.json({ ok: true });
+});
+
+app.post("/api/logout", (req, res) => {
+  res.setHeader("Set-Cookie", SESSION_COOKIE + "=" + cookieFlags(req) + "; Max-Age=0");
+  res.json({ ok: true });
 });
 
 app.use("/api", (req, res, next) => {
-  if (APP_PASSWORD && !passwordOk(req.headers["x-app-password"])) return res.status(401).json({ error: "unauthorized" });
+  if (misconfigured) return res.status(503).json({ error: "APP_PASSWORD is not set" });
+  if (APP_PASSWORD && !hasSession(req)) return res.status(401).json({ error: "unauthorized" });
   next();
 });
 
