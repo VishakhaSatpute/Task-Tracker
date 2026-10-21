@@ -4,6 +4,7 @@ import { draftProjectsFromIdea, copyForClaudeError } from "./claude.js";
 import {
   folderApiSupported, pickFolder, getSavedFolder, syncNotes,
 } from "./notesSync.js";
+import { getAssignees } from "./assignees.js";
 import { SettingsModal } from "./SettingsModal.jsx";
 import { SignOutButton } from "./auth.jsx";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings.js";
@@ -86,8 +87,8 @@ function PriorityMark({ level }) {
   );
 }
 
-function Assignee({ name }) {
-  if (!name) {
+function Assignee({ names }) {
+  if (names.length === 0) {
     return (
       <span className="who">
         <span className="avatar none" aria-hidden="true" />
@@ -95,6 +96,17 @@ function Assignee({ name }) {
       </span>
     );
   }
+  if (names.length > 1) {
+    return (
+      <span className="who multi" title={names.join(", ")}>
+        <span className="avatars" aria-hidden="true">
+          {names.slice(0, 3).map((n) => <span key={n} className="avatar">{initials(n)}</span>)}
+        </span>
+        <span className="nm">{names[0]} +{names.length - 1}</span>
+      </span>
+    );
+  }
+  const name = names[0];
   return (
     <span className="who" title={name}>
       <span className="avatar" aria-hidden="true">{initials(name)}</span>
@@ -112,16 +124,28 @@ function StatusMark({ status }) {
   );
 }
 
+// dueDate is a "YYYY-MM-DD" string; parse it as a local date so it never shifts a day.
+function parseDueDate(s) {
+  const [y, m, d] = String(s).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function Meta({ project, typeLabel, showStatus }) {
+  const due = project.dueDate ? parseDueDate(project.dueDate) : null;
+  const open = project.status === "ideation" || project.status === "inprogress";
+  const overdue = Boolean(due) && open && due < new Date(new Date().setHours(0, 0, 0, 0));
   return (
     <div className="meta">
       {showStatus && <StatusMark status={project.status} />}
-      <span className="m-type">{typeLabel}</span>
+      {/* <span className="m-type">{typeLabel}</span> */}
       <span className="m-prio">
         <PriorityMark level={project.priority} />
         {cap(project.priority)}
       </span>
-      <Assignee name={project.assignedTo} />
+      <Assignee names={getAssignees(project)} />
+      <span className="m-due" data-overdue={overdue} title={overdue ? "Overdue" : "Due date"}>
+        {due ? due.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}
+      </span>
       <span className="m-date" title="Created">{project.createdAt ? formatNoteTime(project.createdAt) : "—"}</span>
     </div>
   );
@@ -515,7 +539,7 @@ function MembersModal({ members, isMemberInUse, onAddMember, onDeleteMember, onC
           <div className="manage-list-scroll">
             <ul className="tm-list">
               {members.map((m) => {
-                const inUse = isMemberInUse(m.name);
+                const inUse = isMemberInUse(m.name) && members.filter((x) => x.name === m.name).length === 1;
                 return (
                   <li key={m.id}>
                     <span className="who">
@@ -847,8 +871,9 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
   const [description, setDescription] = useState(project?.description ?? draft?.description ?? "");
   const [typeId, setTypeId] = useState(project?.typeId ?? draft?.typeId ?? types[0]?.id ?? "");
   const [priority, setPriority] = useState(project?.priority ?? draft?.priority ?? "medium");
-  const [assignedTo, setAssignedTo] = useState(project?.assignedTo ?? "");
+  const [assignees, setAssignees] = useState(getAssignees(project));
   const [status, setStatus] = useState(project?.status ?? "ideation");
+  const [dueDate, setDueDate] = useState(project?.dueDate ?? "");
   const [error, setError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -875,8 +900,9 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
         description: description.trim(),
         typeId,
         priority,
-        assignedTo: assignedTo.trim(),
+        assignees,
         status,
+        dueDate,
       });
       onClose();
     } catch (err) {
@@ -940,16 +966,22 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
           <div className="grid2">
             <div>
               <div className="lbl-row">
-                <label className="lbl" htmlFor="pf-assignee">Assigned to</label>
+                <span className="lbl" id="pf-assignees-lbl">Assigned to</span>
                 <button type="button" className="link small" onClick={onManageMembers}>Manage members</button>
               </div>
-              <select id="pf-assignee" value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)} className="field">
-                <option value="">Unassigned</option>
-                {members.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
-                {assignedTo && !members.some((m) => m.name === assignedTo) && (
-                  <option value={assignedTo}>{assignedTo}</option>
-                )}
-              </select>
+              <div className="assignee-list field" role="group" aria-labelledby="pf-assignees-lbl">
+                {[...members.map((m) => m.name), ...assignees.filter((n) => !members.some((m) => m.name === n))].map((n) => (
+                  <label key={n} className="assignee-opt">
+                    <input
+                      type="checkbox"
+                      checked={assignees.includes(n)}
+                      onChange={(e) => setAssignees(e.target.checked ? [...assignees, n] : assignees.filter((a) => a !== n))}
+                    />
+                    {n}
+                  </label>
+                ))}
+                {members.length === 0 && assignees.length === 0 && <span className="nm none">No members yet</span>}
+              </div>
             </div>
 
             <div>
@@ -957,6 +989,13 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
               <select id="pf-status" value={status} onChange={(e) => setStatus(e.target.value)} className="field">
                 {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
               </select>
+            </div>
+          </div>
+
+          <div className="grid2">
+            <div>
+              <label className="lbl" htmlFor="pf-due">Due date</label>
+              <input id="pf-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="field" />
             </div>
           </div>
 
@@ -1311,9 +1350,10 @@ function ListHead({ sortMode }) {
       <div className="rowmain">
         <span>Project</span>
         <span>Status</span>
-        <span>Type</span>
+        {/* <span>Type</span> */}
         <span data-sorted={byPrio}>Priority{byPrio ? arrow : ""}</span>
         <span>Assignee</span>
+        <span>Due</span>
         <span data-sorted={byDate}>Created{byDate ? arrow : ""}</span>
       </div>
     </div>
@@ -1607,7 +1647,10 @@ function App() {
   const memberProjects = useMemo(() => {
     if (activeMemberFilter.length === 0) return sortedProjects;
     const selected = new Set(activeMemberFilter);
-    return sortedProjects.filter((p) => (p.assignedTo ? selected.has(p.assignedTo) : selected.has(UNASSIGNED_FILTER)));
+    return sortedProjects.filter((p) => {
+      const names = getAssignees(p);
+      return names.length ? names.some((n) => selected.has(n)) : selected.has(UNASSIGNED_FILTER);
+    });
   }, [sortedProjects, activeMemberFilter]);
   const filteredProjects = statusFilter === "all" ? memberProjects : memberProjects.filter((p) => p.status === statusFilter);
   const visibleProjects = useMemo(() => {
@@ -1628,7 +1671,7 @@ function App() {
 
   const isTypeInUse = useCallback((id) => projects.some((p) => p.typeId === id), [projects]);
 
-  const isMemberInUse = useCallback((name) => projects.some((p) => p.assignedTo === name), [projects]);
+  const isMemberInUse = useCallback((name) => projects.some((p) => getAssignees(p).includes(name)), [projects]);
 
   function openAddForm() { setEditingProject(undefined); setDraftProject(null); setIsFormOpen(true); }
   function openEditForm(project) { setEditingProject(project); setDraftProject(null); setIsFormOpen(true); }
@@ -1648,7 +1691,7 @@ function App() {
         description: d.description,
         typeId: d.typeId ?? types[0]?.id,
         priority: d.priority ?? "medium",
-        assignedTo: d.assignedTo || "",
+        assignees: d.assignedTo ? [d.assignedTo] : [],
         status: "ideation",
         order: baseOrder + i,
         createdAt: now,
@@ -1764,8 +1807,10 @@ function App() {
         description: input.description,
         typeId: input.typeId,
         priority: input.priority,
-        assignedTo: input.assignedTo,
+        assignees: input.assignees,
+        assignedTo: "",
         status: input.status,
+        dueDate: input.dueDate || "",
         updatedAt: Date.now(),
       });
     } else {
@@ -1777,8 +1822,9 @@ function App() {
         description: input.description,
         typeId: input.typeId,
         priority: input.priority,
-        assignedTo: input.assignedTo,
+        assignees: input.assignees,
         status: input.status,
+        dueDate: input.dueDate || "",
         order: minOrder - 1,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -1830,7 +1876,7 @@ function App() {
   }
 
   async function handleDeleteMember(member) {
-    if (isMemberInUse(member.name)) return { ok: false, reason: "This member is assigned to one or more projects." };
+    if (isMemberInUse(member.name) && members.filter((x) => x.name === member.name).length === 1) return { ok: false, reason: "This member is assigned to one or more projects." };
     if (!db) return { ok: false, reason: "Not connected." };
     await db.doc("members/" + member.id).delete();
     return { ok: true };

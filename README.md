@@ -9,7 +9,7 @@ Drop meeting transcripts or notes into a folder, or paste text into **Describe a
 - **Project board** with four statuses: Ideation, In Progress, Completed and Dead. View it as a list, tiles or phases.
 - **Describe an idea:** paste an idea, notes or a transcript. If it covers several projects, one card is created for each.
 - **Notes folder sync:** point the app at a folder of `.txt` files. It scans them for projects, and re-processes a file only when it changes. Sync on demand.
-- **Cards** have a name, description, type, priority, assignee and status, plus notes.
+- **Cards** have a name, description, type, priority, assignees, status and an optional due date, plus notes.
 - **Custom project types and team members**, managed from the header.
 - **Local storage:** data lives in a single SQLite file (or a hosted Turso database when deployed), and API keys stay on the server and are never sent to the browser.
 

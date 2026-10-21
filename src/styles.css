@@ -168,6 +168,10 @@
     flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
     background: var(--well); color: var(--ink); font-size: 11px; font-weight: 700; box-shadow: inset 0 0 0 1px var(--line);
   }
+  .avatars { display: inline-flex; flex: none; }
+  .avatars .avatar + .avatar { margin-left: -8px; box-shadow: 0 0 0 2px var(--surface); }
+  .assignee-list { display: flex; flex-direction: column; gap: 6px; max-height: 120px; overflow-y: auto; }
+  .assignee-opt { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   .avatar.none { background: transparent; box-shadow: none; border: 1.5px dashed var(--ink-2); opacity: 0.7; }
   .who { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .who .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
@@ -182,6 +186,10 @@
   .handle:active { cursor: grabbing; }
   .handle:disabled { opacity: 0.2; cursor: not-allowed; }
   .m-date { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-due { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .m-due:empty { display: none; }
+  .m-due[data-overdue="true"] { color: #b3261e; font-weight: 600; }
+  .card .m-due:not(:empty)::before { content: "Due "; }
 
   /* ---------- list view ---------- */
   .list { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
@@ -193,13 +201,15 @@
   .row.is-over { outline: 2px solid var(--focus); outline-offset: -2px; }
   .rowmain {
     flex: 1; min-width: 0; display: grid; align-items: center; gap: 0 14px; padding: 14px 0; cursor: pointer;
-    grid-template-columns: minmax(0, 1fr) 112px 96px 84px 150px 120px;
+    /* Type column hidden: minmax(0, 1fr) 112px 96px 84px 150px 120px 110px */
+    grid-template-columns: minmax(0, 1fr) 112px 84px 150px 110px 120px;
   }
   .rowmain .name, .rowmain .desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rowmain .meta { display: contents; }
   @media (max-width: 900px) {
     .rowmain { grid-template-columns: minmax(0, 1fr); padding: 12px 0; }
     .rowmain .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }
+    .rowmain .m-due:empty { display: none; }
   }
 
   /* ---------- tiles / cards ---------- */
