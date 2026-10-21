@@ -539,7 +539,7 @@ function MembersModal({ members, isMemberInUse, onAddMember, onDeleteMember, onC
           <div className="manage-list-scroll">
             <ul className="tm-list">
               {members.map((m) => {
-                const inUse = isMemberInUse(m.name);
+                const inUse = isMemberInUse(m.name) && members.filter((x) => x.name === m.name).length === 1;
                 return (
                   <li key={m.id}>
                     <span className="who">
@@ -1876,7 +1876,7 @@ function App() {
   }
 
   async function handleDeleteMember(member) {
-    if (isMemberInUse(member.name)) return { ok: false, reason: "This member is assigned to one or more projects." };
+    if (isMemberInUse(member.name) && members.filter((x) => x.name === member.name).length === 1) return { ok: false, reason: "This member is assigned to one or more projects." };
     if (!db) return { ok: false, reason: "Not connected." };
     await db.doc("members/" + member.id).delete();
     return { ok: true };
