@@ -112,7 +112,16 @@ function StatusMark({ status }) {
   );
 }
 
+// dueDate is a "YYYY-MM-DD" string; parse it as a local date so it never shifts a day.
+function parseDueDate(s) {
+  const [y, m, d] = String(s).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function Meta({ project, typeLabel, showStatus }) {
+  const due = project.dueDate ? parseDueDate(project.dueDate) : null;
+  const open = project.status === "ideation" || project.status === "inprogress";
+  const overdue = Boolean(due) && open && due < new Date(new Date().setHours(0, 0, 0, 0));
   return (
     <div className="meta">
       {showStatus && <StatusMark status={project.status} />}
@@ -123,6 +132,9 @@ function Meta({ project, typeLabel, showStatus }) {
       </span>
       <Assignee name={project.assignedTo} />
       <span className="m-date" title="Created">{project.createdAt ? formatNoteTime(project.createdAt) : "—"}</span>
+      <span className={"m-due" + (due ? "" : " empty")} data-overdue={overdue} title={overdue ? "Overdue" : "Due date"}>
+        {due ? due.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
+      </span>
     </div>
   );
 }
@@ -849,6 +861,7 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
   const [priority, setPriority] = useState(project?.priority ?? draft?.priority ?? "medium");
   const [assignedTo, setAssignedTo] = useState(project?.assignedTo ?? "");
   const [status, setStatus] = useState(project?.status ?? "ideation");
+  const [dueDate, setDueDate] = useState(project?.dueDate ?? "");
   const [error, setError] = useState("");
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -877,6 +890,7 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
         priority,
         assignedTo: assignedTo.trim(),
         status,
+        dueDate,
       });
       onClose();
     } catch (err) {
@@ -957,6 +971,13 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
               <select id="pf-status" value={status} onChange={(e) => setStatus(e.target.value)} className="field">
                 {STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
               </select>
+            </div>
+          </div>
+
+          <div className="grid2">
+            <div>
+              <label className="lbl" htmlFor="pf-due">Due date</label>
+              <input id="pf-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="field" />
             </div>
           </div>
 
@@ -1315,6 +1336,7 @@ function ListHead({ sortMode }) {
         <span data-sorted={byPrio}>Priority{byPrio ? arrow : ""}</span>
         <span>Assignee</span>
         <span data-sorted={byDate}>Created{byDate ? arrow : ""}</span>
+        <span>Due</span>
       </div>
     </div>
   );
@@ -1766,6 +1788,7 @@ function App() {
         priority: input.priority,
         assignedTo: input.assignedTo,
         status: input.status,
+        dueDate: input.dueDate || "",
         updatedAt: Date.now(),
       });
     } else {
@@ -1779,6 +1802,7 @@ function App() {
         priority: input.priority,
         assignedTo: input.assignedTo,
         status: input.status,
+        dueDate: input.dueDate || "",
         order: minOrder - 1,
         createdAt: Date.now(),
         updatedAt: Date.now(),
