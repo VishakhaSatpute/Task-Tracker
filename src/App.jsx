@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext } from "react";
+import { categoryLabel, getSubItems } from "./categories.js";
 import { createStore } from "./store.js";
 import { draftProjectsFromIdea, copyForClaudeError } from "./claude.js";
 import {
@@ -130,7 +131,11 @@ function parseDueDate(s) {
   return new Date(y, m - 1, d);
 }
 
+const CategoriesContext = createContext({});
+
 function Meta({ project, typeLabel, showStatus }) {
+  const categoriesById = useContext(CategoriesContext);
+  const catLabel = categoryLabel(project, categoriesById);
   const due = project.dueDate ? parseDueDate(project.dueDate) : null;
   const open = project.status === "ideation" || project.status === "inprogress";
   const overdue = Boolean(due) && open && due < new Date(new Date().setHours(0, 0, 0, 0));
@@ -138,6 +143,7 @@ function Meta({ project, typeLabel, showStatus }) {
     <div className="meta">
       {showStatus && <StatusMark status={project.status} />}
       {/* <span className="m-type">{typeLabel}</span> */}
+      <span className="m-cat" title={catLabel || "No category"}>{catLabel}</span>
       <span className="m-prio">
         <PriorityMark level={project.priority} />
         {cap(project.priority)}
@@ -278,6 +284,7 @@ const SORT_OPTIONS = [
 ];
 const PRIORITY_RANK = { high: 3, medium: 2, low: 1 };
 const UNASSIGNED_FILTER = "__unassigned__";
+const UNCATEGORIZED_FILTER = "__uncategorized__";
 
 // Closes a popover on outside click or Escape (Escape returns focus to the trigger).
 function useDismiss(open, setOpen, rootRef, triggerRef) {
@@ -348,6 +355,46 @@ function MemberMultiSelect({ members, value, onChange }) {
   );
 }
 
+function CategoryMultiSelect({ categories, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  useDismiss(open, setOpen, rootRef, triggerRef);
+
+  const options = [{ key: UNCATEGORIZED_FILTER, label: "Uncategorized" }, ...categories.map((c) => ({ key: c.id, label: c.name }))];
+  const labelOf = (key) => options.find((o) => o.key === key)?.label ?? key;
+  const summary = value.length === 0 ? "All" : value.length === 1 ? labelOf(value[0]) : labelOf(value[0]) + " +" + (value.length - 1);
+
+  function toggle(key) {
+    onChange(value.includes(key) ? value.filter((v) => v !== key) : [...value, key]);
+  }
+
+  return (
+    <div className="fb-pop" ref={rootRef}>
+      <button type="button" ref={triggerRef} className="pill" data-active={value.length > 0} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <span className="pill-k">Category</span>
+        <span className="pill-v">{summary}</span>
+        <ChevronIcon />
+      </button>
+      {open && (
+        <div className="pop left" role="group" aria-label="Filter by category">
+          <p className="pop-head">Categories</p>
+          {options.map((o) => (
+            <label className="ms-opt" key={o.key} data-on={value.includes(o.key)}>
+              <input type="checkbox" checked={value.includes(o.key)} onChange={() => toggle(o.key)} />
+              <span className="ms-name">{o.label}</span>
+            </label>
+          ))}
+          <div className="ms-foot">
+            <button type="button" className="link" onClick={() => onChange([])} disabled={value.length === 0}>Clear</button>
+            <button type="button" className="btn-primary pop-done" onClick={() => setOpen(false)}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SORT_GROUPS = [
   { head: "Manual", values: ["manual"] },
   { head: "Date created", values: ["newest", "oldest"] },
@@ -395,20 +442,24 @@ function SortMenu({ value, onChange }) {
 
 function FilterBar({
   view, sortMode, onSortChange, members, memberFilter, onMemberFilterChange,
+  categories, categoryFilter, onCategoryFilterChange,
   statusFilter, onStatusClear, onClearAll, visibleCount, totalCount,
 }) {
+  const categoryActive = categoryFilter.length > 0;
+  const categoryChipLabel = (v) => (v === UNCATEGORIZED_FILTER ? "Uncategorized" : categories.find((c) => c.id === v)?.name ?? v);
   const showSort = view !== "phases";
   const sortActive = showSort && sortMode !== "manual";
   const memberActive = memberFilter.length > 0;
   const statusActive = statusFilter !== "all" && view !== "phases";
   const memberLabel = (v) => (v === UNASSIGNED_FILTER ? "Unassigned" : v);
-  const anyFilter = memberActive || statusActive;
+  const anyFilter = memberActive || statusActive || categoryActive;
   const showCount = view !== "phases";
 
   return (
     <div className="filterbar" role="group" aria-label="Sort and filter projects">
       <div className="fb-row">
         <MemberMultiSelect members={members} value={memberFilter} onChange={onMemberFilterChange} />
+        <CategoryMultiSelect categories={categories} value={categoryFilter} onChange={onCategoryFilterChange} />
         <div className="fb-spacer" />
         {showCount && <p className="fb-count" aria-live="polite">{visibleCount} of {totalCount} projects</p>}
         {showSort && <SortMenu value={sortMode} onChange={onSortChange} />}
@@ -420,6 +471,14 @@ function FilterBar({
             <span className="chip" key={v}>
               <span className="chip-k">Member</span> <b>{memberLabel(v)}</b>
               <button type="button" onClick={() => onMemberFilterChange(memberFilter.filter((x) => x !== v))} aria-label={"Remove member filter " + memberLabel(v)}>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8" /></svg>
+              </button>
+            </span>
+          ))}
+          {categoryFilter.map((v) => (
+            <span className="chip" key={v}>
+              <span className="chip-k">Category</span> <b>{categoryChipLabel(v)}</b>
+              <button type="button" onClick={() => onCategoryFilterChange(categoryFilter.filter((x) => x !== v))} aria-label={"Remove category filter " + categoryChipLabel(v)}>
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8" /></svg>
               </button>
             </span>
@@ -447,7 +506,7 @@ function FilterBar({
 
 // ---------- Header ----------
 
-function Header({ onAddProject, onManageMembers, onManageTypes, onDescribeIdea, showIdeaButton, ideaButtonDisabled, view, onViewChange, connectionState, onSyncNow, syncing, syncStatus, onOpenSettings }) {
+function Header({ onAddProject, onManageMembers, onManageCategories, onDescribeIdea, showIdeaButton, ideaButtonDisabled, view, onViewChange, connectionState, onSyncNow, syncing, syncStatus, onOpenSettings }) {
   return (
     <div className="top">
       <div>
@@ -465,7 +524,7 @@ function Header({ onAddProject, onManageMembers, onManageTypes, onDescribeIdea, 
         <button type="button" onClick={onOpenSettings} className="btn-outline">Settings</button>
         <SignOutButton />
         <button type="button" onClick={onManageMembers} className="btn-outline" disabled={connectionState !== "ready"}>Manage members</button>
-        <button type="button" onClick={onManageTypes} className="btn-outline" disabled={connectionState !== "ready"}>Manage project types</button>
+        <button type="button" onClick={onManageCategories} className="btn-outline" disabled={connectionState !== "ready"}>Manage categories</button>
         {showIdeaButton && (
           <button type="button" onClick={onDescribeIdea} className="btn-outline" disabled={ideaButtonDisabled}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -684,6 +743,137 @@ function TypesModal({ types, isTypeInUse, onAddType, onDeleteType, onClose }) {
   );
 }
 
+// ---------- CategoriesModal ----------
+
+function CategoriesModal({ categories, isCategoryInUse, isSubItemInUse, onAddCategory, onDeleteCategory, onUpdateSubItems, onClose }) {
+  const [newName, setNewName] = useState("");
+  const [subDrafts, setSubDrafts] = useState({});
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    if (categories.some((c) => (c.name || "").toLowerCase() === trimmed.toLowerCase())) {
+      setMessage(trimmed + " already exists.");
+      return;
+    }
+    try {
+      await onAddCategory(trimmed);
+      setNewName("");
+      setMessage("");
+    } catch (err) {
+      setMessage("Could not add category. Please try again.");
+    }
+  }
+
+  async function handleDelete(id) {
+    const result = await onDeleteCategory(id);
+    setMessage(result.ok ? "" : result.reason || "Unable to delete this category.");
+  }
+
+  async function handleAddSub(cat) {
+    const trimmed = (subDrafts[cat.id] || "").trim();
+    if (!trimmed) return;
+    const subs = getSubItems(cat);
+    if (subs.some((s) => s.toLowerCase() === trimmed.toLowerCase())) {
+      setMessage(trimmed + " already exists under " + cat.name + ".");
+      return;
+    }
+    try {
+      await onUpdateSubItems(cat.id, [...subs, trimmed]);
+      setSubDrafts((d) => ({ ...d, [cat.id]: "" }));
+      setMessage("");
+    } catch (err) {
+      setMessage("Could not save. Please try again.");
+    }
+  }
+
+  async function handleRemoveSub(cat, sub) {
+    if (isSubItemInUse(cat.id, sub)) {
+      setMessage(sub + " is assigned to one or more projects.");
+      return;
+    }
+    await onUpdateSubItems(cat.id, getSubItems(cat).filter((s) => s !== sub));
+    setMessage("");
+  }
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Manage categories" onClick={(e) => e.stopPropagation()}>
+        <h2>Manage categories</h2>
+        <p className="tm-empty" style={{ marginTop: 0 }}>Add sub-items (e.g. professor names) under a category if tasks need them.</p>
+
+        {categories.length === 0 ? (
+          <p className="tm-empty">No categories yet. Add one below.</p>
+        ) : (
+          <div className="manage-list-scroll">
+            <ul className="tm-list">
+              {categories.map((c) => {
+                const inUse = isCategoryInUse(c.id);
+                return (
+                  <li key={c.id} className="cat-item">
+                    <div className="cat-head">
+                      <strong>{c.name}</strong>
+                      <button type="button" disabled={inUse} onClick={() => handleDelete(c.id)} className="link danger" title={inUse ? "Cannot delete: assigned to a task" : "Delete category"}>
+                        Delete
+                      </button>
+                    </div>
+                    <div className="cat-subs">
+                      {getSubItems(c).map((s) => (
+                        <span className="chip" key={s}>
+                          {s}
+                          <button type="button" onClick={() => handleRemoveSub(c, s)} aria-label={"Remove " + s}>
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M2 2l6 6M8 2 2 8" /></svg>
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="tm-add">
+                      <input
+                        type="text"
+                        value={subDrafts[c.id] || ""}
+                        onChange={(e) => setSubDrafts((d) => ({ ...d, [c.id]: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddSub(c); } }}
+                        placeholder="Add sub-item (e.g. professor name)"
+                        className="field"
+                        aria-label={"Add sub-item to " + c.name}
+                      />
+                      <button type="button" className="btn-outline" onClick={() => handleAddSub(c)}>Add</button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {message && <p className="err" style={{ marginTop: 10 }}>{message}</p>}
+
+        <form onSubmit={handleAdd} className="tm-add" style={{ marginTop: 14 }}>
+          <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New category name" className="field" autoFocus />
+          <button type="submit" className="btn-primary">Add category</button>
+        </form>
+
+        <div className="actions" style={{ marginTop: 18 }}>
+          <span />
+          <div className="right">
+            <button type="button" onClick={onClose} className="btn-quiet">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- IdeaCapture (talk out an idea, let Claude draft it) ----------
 
 function MicIcon() {
@@ -865,11 +1055,13 @@ function IdeaCapture({ onGenerate, onClose }) {
 
 // ---------- ProjectForm (modal) ----------
 
-function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete, onManageMembers, onManageTypes, notes, notesLoading, onAddNote, onEditNote, onDeleteNote }) {
+function ProjectForm({ project, draft, types, categories, members, onClose, onSave, onDelete, onManageMembers, onManageCategories, notes, notesLoading, onAddNote, onEditNote, onDeleteNote }) {
   const isEditing = Boolean(project);
   const [name, setName] = useState(project?.name ?? draft?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? draft?.description ?? "");
   const [typeId, setTypeId] = useState(project?.typeId ?? draft?.typeId ?? types[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState(project?.categoryId ?? "");
+  const [subCategory, setSubCategory] = useState(project?.subCategory ?? "");
   const [priority, setPriority] = useState(project?.priority ?? draft?.priority ?? "medium");
   const [assignees, setAssignees] = useState(getAssignees(project));
   const [status, setStatus] = useState(project?.status ?? "ideation");
@@ -887,6 +1079,10 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
   }, [onClose]);
 
   const selectedTypeExists = types.some((t) => t.id === typeId);
+  const selectedCategory = categories.find((c) => c.id === categoryId);
+  const subOptions = getSubItems(selectedCategory);
+  // Keep a previously saved sub-item visible even if it was later removed from the category.
+  const subSelectOptions = subCategory && !subOptions.includes(subCategory) ? [...subOptions, subCategory] : subOptions;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -899,6 +1095,8 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
         name: name.trim(),
         description: description.trim(),
         typeId,
+        categoryId: selectedCategory ? categoryId : "",
+        subCategory: selectedCategory ? subCategory : "",
         priority,
         assignees,
         status,
@@ -947,13 +1145,38 @@ function ProjectForm({ project, draft, types, members, onClose, onSave, onDelete
             <div>
               <div className="lbl-row">
                 <label className="lbl" htmlFor="pf-type">Type</label>
-                <button type="button" className="link small" onClick={onManageTypes}>Manage types</button>
               </div>
               <select id="pf-type" value={typeId} onChange={(e) => setTypeId(e.target.value)} className="field">
                 {!selectedTypeExists && <option value={typeId} disabled>Select a type&hellip;</option>}
                 {types.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
             </div>
+
+            <div>
+              <div className="lbl-row">
+                <label className="lbl" htmlFor="pf-category">Category</label>
+                <button type="button" className="link small" onClick={onManageCategories}>Manage categories</button>
+              </div>
+              <select
+                id="pf-category"
+                value={categoryId}
+                onChange={(e) => { setCategoryId(e.target.value); setSubCategory(""); }}
+                className="field"
+              >
+                <option value="">None</option>
+                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+
+            {subSelectOptions.length > 0 && (
+              <div>
+                <label className="lbl" htmlFor="pf-subcategory">{selectedCategory.name} &ndash; select one</label>
+                <select id="pf-subcategory" value={subCategory} onChange={(e) => setSubCategory(e.target.value)} className="field">
+                  <option value="">None</option>
+                  {subSelectOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
 
             <div>
               <label className="lbl" htmlFor="pf-priority">Priority</label>
@@ -1351,6 +1574,7 @@ function ListHead({ sortMode }) {
         <span>Project</span>
         <span>Status</span>
         {/* <span>Type</span> */}
+        <span>Category</span>
         <span data-sorted={byPrio}>Priority{byPrio ? arrow : ""}</span>
         <span>Assignee</span>
         <span>Due</span>
@@ -1588,6 +1812,7 @@ function App() {
   const rawProjects = useCollection(db, "projects");
   const rawTypes = useCollection(db, "types");
   const rawMembers = useCollection(db, "members");
+  const rawCategories = useCollection(db, "categories");
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(undefined);
@@ -1595,6 +1820,7 @@ function App() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [view, setView] = useState("list");
   const [memberFilter, setMemberFilter] = useState([]);
+  const [categoryFilter, setCategoryFilter] = useState([]);
   const [sortMode, setSortModeState] = useState(() => {
     try {
       const saved = localStorage.getItem("task-tracker-sort-mode");
@@ -1652,7 +1878,25 @@ function App() {
       return names.length ? names.some((n) => selected.has(n)) : selected.has(UNASSIGNED_FILTER);
     });
   }, [sortedProjects, activeMemberFilter]);
-  const filteredProjects = statusFilter === "all" ? memberProjects : memberProjects.filter((p) => p.status === statusFilter);
+  const categories = useMemo(
+    () => [...(rawCategories ?? [])].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    [rawCategories]
+  );
+  const categoriesById = useMemo(() => {
+    const map = {};
+    for (const c of categories) map[c.id] = c;
+    return map;
+  }, [categories]);
+  const activeCategoryFilter = useMemo(
+    () => categoryFilter.filter((v) => v === UNCATEGORIZED_FILTER || categoriesById[v]),
+    [categoryFilter, categoriesById]
+  );
+  const categoryProjects = useMemo(() => {
+    if (activeCategoryFilter.length === 0) return memberProjects;
+    const selected = new Set(activeCategoryFilter);
+    return memberProjects.filter((p) => (categoriesById[p.categoryId] ? selected.has(p.categoryId) : selected.has(UNCATEGORIZED_FILTER)));
+  }, [memberProjects, activeCategoryFilter, categoriesById]);
+  const filteredProjects = statusFilter === "all" ? categoryProjects : categoryProjects.filter((p) => p.status === statusFilter);
   const visibleProjects = useMemo(() => {
     if (sortMode === "manual") return filteredProjects;
     const created = (p) => p.createdAt ?? 0;
@@ -1666,8 +1910,11 @@ function App() {
     });
   }, [filteredProjects, sortMode]);
   const reorderDisabled = sortMode !== "manual";
-  const hasActiveFilter = statusFilter !== "all" || activeMemberFilter.length > 0;
-  function clearFilters() { setStatusFilter("all"); setMemberFilter([]); }
+  const hasActiveFilter = statusFilter !== "all" || activeMemberFilter.length > 0 || activeCategoryFilter.length > 0;
+  function clearFilters() { setStatusFilter("all"); setMemberFilter([]); setCategoryFilter([]); }
+
+  const isCategoryInUse = useCallback((id) => projects.some((p) => p.categoryId === id), [projects]);
+  const isSubItemInUse = useCallback((id, sub) => projects.some((p) => p.categoryId === id && p.subCategory === sub), [projects]);
 
   const isTypeInUse = useCallback((id) => projects.some((p) => p.typeId === id), [projects]);
 
@@ -1806,6 +2053,8 @@ function App() {
         name: input.name,
         description: input.description,
         typeId: input.typeId,
+        categoryId: input.categoryId || "",
+        subCategory: input.subCategory || "",
         priority: input.priority,
         assignees: input.assignees,
         assignedTo: "",
@@ -1821,6 +2070,8 @@ function App() {
         name: input.name,
         description: input.description,
         typeId: input.typeId,
+        categoryId: input.categoryId || "",
+        subCategory: input.subCategory || "",
         priority: input.priority,
         assignees: input.assignees,
         status: input.status,
@@ -1868,6 +2119,23 @@ function App() {
     if (!db) return { ok: false, reason: "Not connected." };
     await db.doc("types/" + id).delete();
     return { ok: true };
+  }
+
+  async function handleAddCategory(name) {
+    if (!db) throw new Error("db unavailable");
+    await db.doc("categories/" + genId()).set({ name, subItems: [], createdAt: Date.now() });
+  }
+
+  async function handleDeleteCategory(id) {
+    if (isCategoryInUse(id)) return { ok: false, reason: "This category is assigned to one or more tasks." };
+    if (!db) return { ok: false, reason: "Not connected." };
+    await db.doc("categories/" + id).delete();
+    return { ok: true };
+  }
+
+  async function handleUpdateSubItems(id, subItems) {
+    if (!db) throw new Error("db unavailable");
+    await db.doc("categories/" + id).update({ subItems });
   }
 
   async function handleAddMember(name) {
@@ -1929,15 +2197,16 @@ function App() {
   }
 
   const connectionState = db === null ? "unavailable" : db === undefined ? "loading" : "ready";
-  const dataLoading = connectionState === "loading" || (db && (rawProjects === null || rawTypes === null || rawMembers === null));
+  const dataLoading = connectionState === "loading" || (db && (rawProjects === null || rawTypes === null || rawMembers === null || rawCategories === null));
   const showContent = !dataLoading && connectionState !== "unavailable";
 
   return (
+    <CategoriesContext.Provider value={categoriesById}>
     <div>
       <Header
         onAddProject={openAddForm}
         onManageMembers={() => setManageModal("members")}
-        onManageTypes={() => setManageModal("types")}
+        onManageCategories={() => setManageModal("categories")}
         onDescribeIdea={() => setIdeaCaptureOpen(true)}
         showIdeaButton={true}
         ideaButtonDisabled={!settings.hasApiKey || connectionState !== "ready"}
@@ -1961,7 +2230,7 @@ function App() {
       {showContent && (
         <React.Fragment>
           <PipelineStrip
-            projects={memberProjects}
+            projects={categoryProjects}
             value={statusFilter}
             onChange={setStatusFilter}
             interactive={view !== "phases"}
@@ -1974,6 +2243,9 @@ function App() {
             members={members}
             memberFilter={activeMemberFilter}
             onMemberFilterChange={setMemberFilter}
+            categories={categories}
+            categoryFilter={activeCategoryFilter}
+            onCategoryFilterChange={setCategoryFilter}
             statusFilter={statusFilter}
             onStatusClear={() => setStatusFilter("all")}
             onClearAll={clearFilters}
@@ -2008,7 +2280,7 @@ function App() {
           )}
           {view === "phases" && (
             <ProjectPhasesView
-              projects={memberProjects}
+              projects={categoryProjects}
               typesById={typesById}
               onSelectProject={openEditForm}
               onReorderWithinStatus={handleReorderWithinStatus}
@@ -2038,6 +2310,18 @@ function App() {
         />
       )}
 
+      {manageModal === "categories" && (
+        <CategoriesModal
+          categories={categories}
+          isCategoryInUse={isCategoryInUse}
+          isSubItemInUse={isSubItemInUse}
+          onAddCategory={handleAddCategory}
+          onDeleteCategory={handleDeleteCategory}
+          onUpdateSubItems={handleUpdateSubItems}
+          onClose={() => setManageModal(null)}
+        />
+      )}
+
       {ideaCaptureOpen && (
         <IdeaCapture
           onGenerate={handleGenerateIdea}
@@ -2061,12 +2345,13 @@ function App() {
           project={editingProject}
           draft={draftProject}
           types={types}
+          categories={categories}
           members={members}
           onClose={closeForm}
           onSave={handleSaveProject}
           onDelete={handleDeleteProject}
           onManageMembers={() => setManageModal("members")}
-          onManageTypes={() => setManageModal("types")}
+          onManageCategories={() => setManageModal("categories")}
           notes={notes}
           notesLoading={notesLoading}
           onAddNote={handleAddNote}
@@ -2075,6 +2360,7 @@ function App() {
         />
       )}
     </div>
+    </CategoriesContext.Provider>
   );
 }
 

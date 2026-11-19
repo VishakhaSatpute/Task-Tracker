@@ -178,6 +178,12 @@
   .who .nm.none { opacity: 0.8; }
   .m-status, .m-prio { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }
   .m-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+  .m-cat { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+  .card .m-cat:empty { display: none; }
+  .cat-item { display: block; }
+  .cat-head { display: flex; justify-content: space-between; align-items: center; }
+  .cat-subs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .cat-item .tm-add { margin-top: 4px; }
   .meta { font-size: 13.5px; }
   .name { font-size: 16px; font-weight: 700; letter-spacing: -0.005em; }
   .desc { margin-top: 2px; font-size: 13.5px; color: var(--ink-2); }
@@ -202,14 +208,14 @@
   .rowmain {
     flex: 1; min-width: 0; display: grid; align-items: center; gap: 0 14px; padding: 14px 0; cursor: pointer;
     /* Type column hidden: minmax(0, 1fr) 112px 96px 84px 150px 120px 110px */
-    grid-template-columns: minmax(0, 1fr) 112px 84px 150px 110px 120px;
+    grid-template-columns: minmax(0, 1fr) 112px 150px 84px 150px 110px 120px;
   }
   .rowmain .name, .rowmain .desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rowmain .meta { display: contents; }
   @media (max-width: 900px) {
     .rowmain { grid-template-columns: minmax(0, 1fr); padding: 12px 0; }
     .rowmain .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 8px; }
-    .rowmain .m-due:empty { display: none; }
+    .rowmain .m-due:empty, .rowmain .m-cat:empty { display: none; }
   }
 
   /* ---------- tiles / cards ---------- */
