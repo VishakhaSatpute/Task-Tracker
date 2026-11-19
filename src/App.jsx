@@ -506,7 +506,7 @@ function FilterBar({
 
 // ---------- Header ----------
 
-function Header({ onAddProject, onManageMembers, onManageTypes, onManageCategories,onDescribeIdea, showIdeaButton, ideaButtonDisabled, view, onViewChange, connectionState, onSyncNow, syncing, syncStatus, onOpenSettings }) {
+function Header({ onAddProject, onManageMembers, onManageCategories, onDescribeIdea, showIdeaButton, ideaButtonDisabled, view, onViewChange, connectionState, onSyncNow, syncing, syncStatus, onOpenSettings }) {
   return (
     <div className="top">
       <div>
@@ -524,7 +524,6 @@ function Header({ onAddProject, onManageMembers, onManageTypes, onManageCategori
         <button type="button" onClick={onOpenSettings} className="btn-outline">Settings</button>
         <SignOutButton />
         <button type="button" onClick={onManageMembers} className="btn-outline" disabled={connectionState !== "ready"}>Manage members</button>
-        <button type="button" onClick={onManageTypes} className="btn-outline" disabled={connectionState !== "ready"}>Manage project types</button>
         <button type="button" onClick={onManageCategories} className="btn-outline" disabled={connectionState !== "ready"}>Manage categories</button>
         {showIdeaButton && (
           <button type="button" onClick={onDescribeIdea} className="btn-outline" disabled={ideaButtonDisabled}>
@@ -1056,7 +1055,7 @@ function IdeaCapture({ onGenerate, onClose }) {
 
 // ---------- ProjectForm (modal) ----------
 
-function ProjectForm({ project, draft, types, categories, members, onClose, onSave, onDelete, onManageMembers, onManageTypes, onManageCategories, notes, notesLoading, onAddNote, onEditNote, onDeleteNote }) {
+function ProjectForm({ project, draft, types, categories, members, onClose, onSave, onDelete, onManageMembers, onManageCategories, notes, notesLoading, onAddNote, onEditNote, onDeleteNote }) {
   const isEditing = Boolean(project);
   const [name, setName] = useState(project?.name ?? draft?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? draft?.description ?? "");
@@ -1146,7 +1145,6 @@ function ProjectForm({ project, draft, types, categories, members, onClose, onSa
             <div>
               <div className="lbl-row">
                 <label className="lbl" htmlFor="pf-type">Type</label>
-                <button type="button" className="link small" onClick={onManageTypes}>Manage types</button>
               </div>
               <select id="pf-type" value={typeId} onChange={(e) => setTypeId(e.target.value)} className="field">
                 {!selectedTypeExists && <option value={typeId} disabled>Select a type&hellip;</option>}
@@ -2208,7 +2206,6 @@ function App() {
       <Header
         onAddProject={openAddForm}
         onManageMembers={() => setManageModal("members")}
-        onManageTypes={() => setManageModal("types")}
         onManageCategories={() => setManageModal("categories")}
         onDescribeIdea={() => setIdeaCaptureOpen(true)}
         showIdeaButton={true}
@@ -2354,7 +2351,6 @@ function App() {
           onSave={handleSaveProject}
           onDelete={handleDeleteProject}
           onManageMembers={() => setManageModal("members")}
-          onManageTypes={() => setManageModal("types")}
           onManageCategories={() => setManageModal("categories")}
           notes={notes}
           notesLoading={notesLoading}
