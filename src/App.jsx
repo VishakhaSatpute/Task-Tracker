@@ -827,6 +827,7 @@ function CategoriesModal({ categories, isCategoryInUse, isSubItemInUse, onAddCat
                         Delete
                       </button>
                     </div>
+                    {getSubItems(c).length === 0 && <p className="cat-none">No sub-items</p>}
                     <div className="cat-subs">
                       {getSubItems(c).map((s) => (
                         <span className="chip" key={s}>

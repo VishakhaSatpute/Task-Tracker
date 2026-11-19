@@ -180,10 +180,14 @@
   .m-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
   .m-cat { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
   .card .m-cat:empty { display: none; }
-  .cat-item { display: block; }
-  .cat-head { display: flex; justify-content: space-between; align-items: center; }
-  .cat-subs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-  .cat-item .tm-add { margin-top: 4px; }
+  .tm-list li.cat-item { display: block; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  .cat-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .cat-head strong { font-size: 15px; }
+  .cat-subs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .cat-none { margin-top: 8px; font-size: 13px; color: var(--ink-2); }
+  .cat-item .tm-add { margin-top: 10px; }
+  .cat-item .tm-add .field { flex: 1; min-width: 0; }
+  .tm-add .btn-outline, .tm-add .btn-primary { white-space: nowrap; flex: none; }
   .meta { font-size: 13.5px; }
   .name { font-size: 16px; font-weight: 700; letter-spacing: -0.005em; }
   .desc { margin-top: 2px; font-size: 13.5px; color: var(--ink-2); }
@@ -275,7 +279,7 @@
   .err { font-size: 13.5px; color: var(--danger); }
   .tm { padding-top: 12px; border-top: 1px solid var(--line); }
   .manage-list-scroll { max-height: 320px; overflow-y: auto; margin-top: 4px; }
-  .tm-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .tm-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
   .tm-list li { display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
   .tm-add { display: flex; gap: 8px; margin-top: 10px; }
   .tm-add .field { padding: 7px 10px; }
